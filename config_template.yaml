@@ -1,0 +1,108 @@
+# =============================================================
+# AutoEvolve — Master Configuration
+# Hot-reloadable: changes take effect on next poll cycle.
+# Use "Reload Config" in the dashboard or send ctrl command.
+# =============================================================
+
+# ── AutoEvolve environment ────────────────────────────────────
+autoevolve:
+  venv: "./.venv"            # venv used to run THIS system (main.py)
+                              # Leave blank if running directly in system Python
+
+# ── FreqTrade ─────────────────────────────────────────────────
+freqtrade:
+  venv:           "~/freqtrade/.venv"       # FreqTrade's own venv
+                                             # All FT commands (start/stop/reload) use this
+  config_file:    "./freqtrade_config.json"  # FT config kept HERE in autoevolve folder
+  strategies_dir: "~/freqtrade/user_data/strategies"
+  db_path:        "~/freqtrade/user_data/tradesv3.sqlite"
+  strategy_name:  "AutoEvolveStrategy"
+
+  # FreqTrade REST API (for hot-reload without restart)
+  api:
+    host:     "127.0.0.1"
+    port:     8080
+    username: "freqtrade"
+    password: "CHANGE_ME"     # must match freqtrade_config.json api_server.password
+
+  # Extra flags appended when starting FreqTrade
+  # e.g. "--dry-run" or "--dry-run --logfile /tmp/ft.log"
+  extra_flags: "--dry-run"
+
+  # Path where FreqTrade writes its own log (tailed for strategy error detection)
+  logfile: "./logs/freqtrade.log"
+
+  # Max LLM fix attempts for the same strategy error before giving up
+  ft_error_max_fix_attempts: 5
+
+# ── Evolution triggers ────────────────────────────────────────
+trigger:
+  consecutive_losses:        3     # evolve after N consecutive losing trades
+  min_trades_before_trigger: 10    # don't trigger until at least N trades closed
+  cooldown_minutes:          60    # minimum minutes between evolutions
+
+# ── Rollback ──────────────────────────────────────────────────
+rollback:
+  evaluate_after_n_trades:    5     # trades to observe post-deploy before deciding
+  rollback_if_winrate_below:  0.35  # rollback if win rate drops below 35%
+  rollback_if_drawdown_above: 0.15  # rollback if drawdown exceeds 15%
+
+# ── Checkpoints ───────────────────────────────────────────────
+checkpoints:
+  directory:       "./checkpoints"
+  max_generations: 10               # keep last N, prune older ones
+
+# ── Optimization targets (fed to LLM as context) ──────────────
+optimization:
+  targets:
+    profit_factor: 1.8
+    sharpe_ratio:  1.5
+    win_rate:      0.52
+    max_drawdown:  0.10
+
+# ── LLM Provider ──────────────────────────────────────────────
+# provider options: anthropic | openai | openrouter | chutes | ollama
+llm:
+  provider: "anthropic"
+
+  anthropic:
+    model:       "claude-opus-4-6"
+    api_key_env: "ANTHROPIC_API_KEY"
+    max_tokens:  8192
+
+  openai:
+    model:       "gpt-4o"
+    api_key_env: "OPENAI_API_KEY"
+    max_tokens:  8192
+
+  openrouter:
+    # Any model slug from https://openrouter.ai/models
+    model:       "anthropic/claude-opus-4-6"
+    api_key_env: "OPENROUTER_API_KEY"
+    base_url:    "https://openrouter.ai/api/v1"
+    site_url:    ""               # optional HTTP-Referer sent to OR
+    site_name:   "AutoEvolve"    # optional X-Title sent to OR
+    max_tokens:  8192
+
+  chutes:
+    # Any model slug from https://chutes.ai
+    model:       "deepseek-ai/DeepSeek-R1"
+    api_key_env: "CHUTES_API_KEY"
+    base_url:    "https://llm.chutes.ai/v1"
+    max_tokens:  8192
+
+  ollama:
+    model:    "codellama:34b"
+    base_url: "http://localhost:11434"
+    max_tokens: 8192
+
+# ── Dashboard (Streamlit) ─────────────────────────────────────
+dashboard:
+  port:         8501
+  host:         "0.0.0.0"
+  refresh_secs: 10
+
+# ── Logging ───────────────────────────────────────────────────
+logging:
+  directory: "./logs"
+  level:     "INFO"       # DEBUG | INFO | WARNING | ERROR

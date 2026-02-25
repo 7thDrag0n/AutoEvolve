@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>AutoEvolve</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700&display=swap');
+:root{
+  --bg:#05080f; --surface:#0a1020; --panel:#0d1626;
+  --border:#162035; --border2:#1f3050;
+  --amber:#f0a500; --green:#00d084; --red:#ff4d6a;
+  --blue:#4488ff; --purple:#9b7cf4;
+  --text:#c8d8f0; --muted:#3d5a80;
+  --mono:'IBM Plex Mono',monospace; --sans:'Space Grotesk',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh}
+a{color:var(--blue);text-decoration:none}
+
+/* Layout */
+.layout{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
+.sidebar{background:var(--surface);border-right:1px solid var(--border);padding:16px 12px;display:flex;flex-direction:column;gap:4px}
+.main{padding:16px 20px;overflow:auto}
+
+/* Sidebar */
+.logo{font-family:var(--sans);font-size:1.2rem;font-weight:700;color:#e8f4ff;margin-bottom:4px}
+.logo-sub{font-family:var(--mono);font-size:.6rem;color:var(--muted);margin-bottom:14px}
+.sh{font-family:var(--mono);font-size:.6rem;font-weight:500;text-transform:uppercase;letter-spacing:.14em;color:var(--muted);border-bottom:1px solid var(--border);padding-bottom:4px;margin:10px 0 6px}
+.btn{width:100%;padding:6px 10px;background:var(--panel);border:1px solid var(--border2);border-radius:4px;color:var(--text);font-family:var(--mono);font-size:.72rem;cursor:pointer;text-align:left;transition:border-color .12s,color .12s}
+.btn:hover{border-color:var(--amber);color:var(--amber);background:rgba(240,165,0,.06)}
+.btn.danger:hover{border-color:var(--red);color:var(--red);background:rgba(255,77,106,.06)}
+.btn.success:hover{border-color:var(--green);color:var(--green);background:rgba(0,208,132,.06)}
+.toggle-row{display:flex;align-items:center;gap:8px;margin:5px 0}
+.toggle-lbl{font-size:.62rem;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.07em;min-width:52px}
+.tog{position:relative;display:inline-flex;width:44px;height:22px;cursor:pointer;flex-shrink:0}
+.tog input{opacity:0;width:0;height:0}
+.tog-sl{position:absolute;inset:0;background:#0d1626;border-radius:11px;border:1px solid var(--border2);transition:.2s}
+.tog-sl::before{content:"";position:absolute;width:16px;height:16px;left:2px;top:2px;background:var(--muted);border-radius:50%;transition:.2s}
+.tog input:checked+.tog-sl{background:rgba(0,208,132,.12);border-color:#00d08450}
+.tog input:checked+.tog-sl::before{transform:translateX(22px);background:var(--green)}
+.tog-state{font-size:.6rem;font-family:var(--mono)}
+.btn-row{display:flex;gap:4px}
+.btn-row .btn{text-align:center}
+select{width:100%;padding:5px 8px;background:var(--panel);border:1px solid var(--border2);border-radius:4px;color:var(--text);font-family:var(--mono);font-size:.72rem;margin-top:4px}
+.sidebar-status{font-family:var(--mono);font-size:.6rem;color:var(--muted);margin-top:4px;line-height:1.6}
+
+/* Pills */
+.pill{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:20px;font-family:var(--mono);font-size:.65rem;font-weight:500;letter-spacing:.06em;text-transform:uppercase}
+.pill::before{content:'●';font-size:.45rem}
+.pill-run{color:var(--green);background:rgba(0,208,132,.1);border:1px solid rgba(0,208,132,.3)}
+.pill-pause{color:var(--amber);background:rgba(240,165,0,.1);border:1px solid rgba(240,165,0,.3)}
+.pill-evo{color:var(--blue);background:rgba(68,136,255,.1);border:1px solid rgba(68,136,255,.3)}
+.pill-stop{color:var(--red);background:rgba(255,77,106,.1);border:1px solid rgba(255,77,106,.3)}
+.pill-mon{color:var(--purple);background:rgba(155,124,244,.1);border:1px solid rgba(155,124,244,.3)}
+.pill-warn{color:var(--amber);background:rgba(240,165,0,.08);border:1px solid rgba(240,165,0,.2)}
+
+/* Header */
+.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.topbar-pills{display:flex;gap:8px;align-items:center}
+.topbar-time{font-family:var(--mono);font-size:.6rem;color:var(--muted);text-align:right;line-height:1.7}
+
+/* Banner */
+.banner{padding:8px 14px;border-radius:5px;font-family:var(--mono);font-size:.7rem;margin-bottom:10px}
+.banner-warn{background:rgba(240,165,0,.08);border:1px solid rgba(240,165,0,.3);color:var(--amber)}
+.banner-err{background:rgba(255,77,106,.08);border:1px solid rgba(255,77,106,.3);color:var(--red)}
+
+/* Metric cards */
+.cards{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:12px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:5px;padding:10px 14px;position:relative;overflow:hidden}
+.card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:5px 0 0 5px}
+.c-amber::before{background:var(--amber)}.c-green::before{background:var(--green)}
+.c-red::before{background:var(--red)}.c-blue::before{background:var(--blue)}.c-purple::before{background:var(--purple)}
+.card-label{font-family:var(--mono);font-size:.58rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.card-value{font-family:var(--mono);font-size:1.3rem;font-weight:600;line-height:1}
+.cv-amber{color:var(--amber)}.cv-green{color:var(--green)}.cv-red{color:var(--red)}
+.cv-blue{color:var(--blue)}.cv-purple{color:var(--purple)}
+
+/* Loss bar */
+.lossrow{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.lossbar-bg{flex:1;height:4px;background:var(--border);border-radius:2px}
+.lossbar-fg{height:4px;border-radius:2px;transition:width .4s}
+.losstxt{font-family:var(--mono);font-size:.62rem;color:var(--muted);white-space:nowrap}
+
+/* Tabs */
+.tabs{display:flex;gap:3px;margin-bottom:12px;border-bottom:1px solid var(--border)}
+.tab{padding:6px 14px;font-family:var(--mono);font-size:.7rem;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .1s,border-color .1s}
+.tab.active{color:var(--text);border-bottom-color:var(--amber)}
+.tab:hover:not(.active){color:var(--text)}
+.tabpanel{display:none}.tabpanel.active{display:block}
+
+/* Log box */
+.logbox{background:var(--panel);border:1px solid var(--border);border-radius:5px;padding:10px 14px;height:520px;overflow-y:auto;font-family:var(--mono);font-size:.68rem}
+.ll{padding:2px 0;border-bottom:1px solid rgba(22,32,53,.5);white-space:pre-wrap;word-break:break-all}
+.ll-i{color:#5a7a9a}.ll-w{color:var(--amber)}.ll-e{color:var(--red)}
+.lts{color:#2d4060;margin-right:6px}.llv{color:#2d5078;margin-right:6px}
+
+/* Table */
+table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:.7rem}
+th{background:var(--panel);color:var(--muted);padding:6px 10px;text-align:left;border-bottom:1px solid var(--border);font-weight:500;letter-spacing:.06em}
+td{padding:5px 10px;border-bottom:1px solid rgba(22,32,53,.5)}
+tr:hover td{background:rgba(255,255,255,.015)}
+.profit-pos{color:var(--green)}.profit-neg{color:var(--red)}
+
+/* Checkpoint cards */
+.ckpt-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-top:8px}
+.ckpt{background:var(--panel);border:1px solid var(--border);border-radius:5px;padding:10px 12px;font-family:var(--mono);font-size:.68rem}
+.ckpt.current{border-color:var(--amber)}
+.ckpt-gen{font-weight:600;margin-bottom:5px;color:var(--text)}
+.ckpt.current .ckpt-gen{color:var(--amber)}
+.ckpt-row{color:var(--muted);line-height:1.7}
+
+/* Code viewer */
+.codebox{background:var(--panel);border:1px solid var(--border);border-radius:5px;padding:12px 16px;overflow:auto;max-height:580px}
+.codebox pre{font-family:var(--mono);font-size:.68rem;line-height:1.55;color:#b0c8e0}
+
+/* Config */
+.cfgbox{background:var(--panel);border:1px solid var(--border);border-radius:5px;padding:12px 16px;max-height:580px;overflow:auto}
+.cfgbox pre{font-family:var(--mono);font-size:.7rem;color:#9ab8d0}
+
+/* WS indicator */
+.ws-dot{width:7px;height:7px;border-radius:50%;background:var(--red);display:inline-block;margin-right:4px;transition:background .3s}
+.ws-dot.ok{background:var(--green)}
+
+/* Notification toast */
+.toast{position:fixed;bottom:20px;right:20px;background:var(--panel);border:1px solid var(--border2);border-radius:5px;padding:10px 16px;font-family:var(--mono);font-size:.72rem;z-index:999;opacity:0;transition:opacity .25s;pointer-events:none}
+.toast.show{opacity:1}
+
+/* FT startup log */
+.startup-log{background:#020408;border:1px solid var(--border);border-radius:5px;padding:10px 14px;max-height:360px;overflow-y:auto;font-family:var(--mono);font-size:.66rem;color:#8aacca;white-space:pre-wrap;word-break:break-all}
+</style>
+</head>
+<body>
+
+<div class="layout">
+
+<!-- ── Sidebar ─────────────────────────────────────────────── -->
+<aside class="sidebar">
+  <div class="logo">🧬 AutoEvolve</div>
+  <div class="logo-sub">self-improving · freqtrade</div>
+
+  <div class="sh">Desired State</div>
+  <div class="toggle-row">
+    <span class="toggle-lbl">Evolve</span>
+    <label class="tog">
+      <input type="checkbox" id="tog-evolve" onchange="toggleDesired('evolve',this.checked)">
+      <span class="tog-sl"></span>
+    </label>
+    <span class="tog-state" id="tog-evolve-st" style="color:var(--muted)">stopped</span>
+  </div>
+  <div class="toggle-row">
+    <span class="toggle-lbl">FreqTrade</span>
+    <label class="tog">
+      <input type="checkbox" id="tog-ft" onchange="toggleDesired('ft',this.checked)">
+      <span class="tog-sl"></span>
+    </label>
+    <span class="tog-state" id="tog-ft-st" style="color:var(--muted)">stopped</span>
+  </div>
+
+  <div class="sh">⚡ AutoEvolve</div>
+  <button class="btn" onclick="ctrl('force_evolve')">🔥 Force Evolution</button>
+  <button class="btn" style="margin-top:3px" onclick="ctrl('reload_config')">↺ Reload Config</button>
+
+  <div class="sh">🤖 FreqTrade</div>
+  <button class="btn" onclick="ctrl('restart_ft')">↻ Restart FT</button>
+  <button class="btn" style="margin-top:3px" onclick="ctrl('reload_ft')">↺ Hot-Reload Config</button>
+  <div class="sidebar-status" id="ft-status-detail">status: —</div>
+
+  <div class="sh">⏪ Rollback</div>
+  <select id="rb-select"><option value="">— select generation —</option></select>
+  <button class="btn danger" style="margin-top:4px" onclick="doRollback()">⏪ Rollback to Selected</button>
+
+  <div style="flex:1"></div>
+
+  <div style="font-family:var(--mono);font-size:.58rem;color:var(--muted);margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+    <span class="ws-dot" id="ws-dot"></span>live
+    <span id="ws-ts" style="float:right;color:#1e3050"></span>
+  </div>
+</aside>
+
+<!-- ── Main ────────────────────────────────────────────────── -->
+<main class="main">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="topbar-pills" id="pills"></div>
+    <div class="topbar-time" id="topbar-time"></div>
+  </div>
+
+  <!-- Banners -->
+  <div id="banner-orch"></div>
+  <div id="banner-ft-err"></div>
+
+  <!-- Metric cards -->
+  <div class="cards" id="cards"></div>
+
+  <!-- Loss bar -->
+  <div class="lossrow">
+    <span class="losstxt" id="loss-txt">losses: —</span>
+    <div class="lossbar-bg"><div class="lossbar-fg" id="lossbar" style="width:0;background:var(--green)"></div></div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab active" onclick="showTab('logs')">## Logs</div>
+    <div class="tab" onclick="showTab('trades')">» Trades</div>
+    <div class="tab" onclick="showTab('evo')">~ Evolution</div>
+    <div class="tab" onclick="showTab('code')">&lt;/&gt; Code</div>
+    <div class="tab" onclick="showTab('config')">::  Config</div>
+    <div class="tab" onclick="showTab('startup')">⚡ FT Startup</div>
+  </div>
+
+  <!-- Log tab -->
+  <div class="tabpanel active" id="tab-logs">
+    <div class="logbox" id="logbox"></div>
+  </div>
+
+  <!-- Trades tab -->
+  <div class="tabpanel" id="tab-trades">
+    <div id="trades-content"><p style="color:var(--muted);font-size:.8rem;padding:20px">Loading trades…</p></div>
+  </div>
+
+  <!-- Evolution tab -->
+  <div class="tabpanel" id="tab-evo">
+    <div id="evo-content"><p style="color:var(--muted);font-size:.8rem;padding:20px">Loading history…</p></div>
+    <div class="sh" style="margin-top:16px">Saved Checkpoints</div>
+    <div class="ckpt-grid" id="ckpt-grid"></div>
+  </div>
+
+  <!-- Code tab -->
+  <div class="tabpanel" id="tab-code">
+    <div id="code-content"><p style="color:var(--muted);font-size:.8rem;padding:20px">Loading…</p></div>
+  </div>
+
+  <!-- Config tab -->
+  <div class="tabpanel" id="tab-config">
+    <div id="config-content"><p style="color:var(--muted);font-size:.8rem;padding:20px">Loading…</p></div>
+  </div>
+
+  <!-- FT Startup log tab -->
+  <div class="tabpanel" id="tab-startup">
+    <p style="font-family:var(--mono);font-size:.65rem;color:var(--muted);margin-bottom:8px">
+      FreqTrade stdout/stderr from last start attempt
+      <button class="btn" style="float:right;width:auto;padding:3px 10px" onclick="loadStartupLog()">↺ Refresh</button>
+    </p>
+    <div class="startup-log" id="startup-log">—</div>
+  </div>
+
+</main>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────
+let _state = {}, _health = {}, _currentTab = 'logs';
+let _checkpoints = [], _checkpointsLoaded = false;
+let _ws = null, _wsRetries = 0;
+
+// ── Tab switching ──────────────────────────────────────────────
+function showTab(name) {
+  _currentTab = name;
+  document.querySelectorAll('.tab').forEach((t,i) => {
+    const tabs = ['logs','trades','evo','code','config','startup'];
+    t.classList.toggle('active', tabs[i] === name);
+  });
+  document.querySelectorAll('.tabpanel').forEach(p => {
+    p.classList.toggle('active', p.id === 'tab-' + name);
+  });
+  if (name === 'code')    loadCode();
+  if (name === 'config')  loadConfig();
+  if (name === 'startup') loadStartupLog();
+  if (name === 'evo' && !_checkpointsLoaded) loadCheckpoints();
+}
+
+// ── Toast ──────────────────────────────────────────────────────
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2800);
+}
+
+// ── Control ───────────────────────────────────────────────────
+function renderToggles() {
+  const ed = (_state.evolve_desired || 'stopped');
+  const fd = (_state.ft_desired     || 'stopped');
+  const te = document.getElementById('tog-evolve');
+  const tf = document.getElementById('tog-ft');
+  if (te && !te._busy) te.checked = (ed === 'running');
+  if (tf && !tf._busy) tf.checked = (fd === 'running');
+  const es = document.getElementById('tog-evolve-st');
+  const fs = document.getElementById('tog-ft-st');
+  if (es) { es.textContent = ed; es.style.color = ed==='running'?'var(--green)':'var(--muted)'; }
+  if (fs) { fs.textContent = fd; fs.style.color = fd==='running'?'var(--green)':'var(--muted)'; }
+}
+
+async function toggleDesired(which, on) {
+  const el = document.getElementById('tog-' + which);
+  if (el) el._busy = true;
+  if (which === 'evolve') await ctrl(on ? 'resume' : 'pause');
+  else                    await ctrl(on ? 'start_ft' : 'stop_ft');
+  setTimeout(() => { if (el) el._busy = false; }, 2500);
+}
+
+async function ctrl(action, extra={}) {
+  try {
+    const r = await fetch('/api/control', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({action, ...extra}),
+    });
+    const d = await r.json();
+    toast(d.ok ? `✓ ${action}` : `✗ ${d.error}`);
+  } catch(e) { toast('✗ ' + e.message); }
+}
+
+function doRollback() {
+  const sel = document.getElementById('rb-select');
+  const gen = parseInt(sel.value);
+  if (!gen) { toast('Select a generation first'); return; }
+  if (!confirm(`Rollback to generation ${gen}?`)) return;
+  ctrl('rollback', {generation: gen});
+}
+
+// ── Render state ──────────────────────────────────────────────
+function renderState(s, health) {
+  const orchAlive = isOrchAlive(s);
+  const ftOk      = orchAlive && s.ft_running;
+  const ftApiOk   = health && health.ft_reachable;
+  const failCount = health ? (health.total_failures || 0) : 0;
+
+  // Pills
+  const pillMap = {
+    running:'pill-run', paused:'pill-pause', evolving:'pill-evo',
+    monitoring:'pill-mon', offline:'pill-stop', fixing_ft_error:'pill-warn',
+  };
+  const aeCls = !orchAlive ? 'pill-stop' : (pillMap[s.status] || 'pill-stop');
+  const aeLbl = !orchAlive ? 'offline' : (s.status || 'unknown');
+  const ftCls = s.ft_error ? 'pill-stop' : ftOk ? 'pill-run' : 'pill-stop';
+  const ftLbl = s.ft_error ? `ft · error(${s.ft_error_count||0})` : ftOk ? 'ft · online' : 'ft · offline';
+  const apiCls = !ftOk ? 'pill-warn' : ftApiOk ? 'pill-run' : 'pill-stop';
+  const apiLbl = !ftOk ? 'api · n/a' : ftApiOk ? 'api · ok' : (failCount > 0 ? `api · fail(${failCount})` : 'api · —');
+
+  document.getElementById('pills').innerHTML =
+    `<span class="pill ${aeCls}">ae · ${aeLbl}</span>` +
+    `<span class="pill ${ftCls}" style="margin-left:6px">${ftLbl}</span>` +
+    `<span class="pill ${apiCls}" style="margin-left:6px">${apiLbl}</span>`;
+
+  // Time
+  document.getElementById('topbar-time').innerHTML =
+    `<div>${(s.updated_at||'').replace(' ','\n')}</div>`;
+
+  // Orchestrator offline banner
+  const bOrch = document.getElementById('banner-orch');
+  if (!orchAlive) {
+    const age = orchAge(s);
+    bOrch.innerHTML = `<div class="banner banner-warn">
+      ⚠ ORCHESTRATOR OFFLINE — last heartbeat: ${age ? age+'s ago' : 'never'}<br/>
+      <span style="font-size:.62rem;color:#8a6a20">Run <b>python main.py</b> to start the system. Dashboard is read-only.</span>
+    </div>`;
+  } else {
+    bOrch.innerHTML = '';
+  }
+
+  // FT error banner
+  const bFt = document.getElementById('banner-ft-err');
+  if (s.ft_error) {
+    const max = 5;
+    bFt.innerHTML = `<div class="banner banner-err">
+      ⚠ FT STRATEGY ERROR — auto-fix attempt ${s.ft_error_count||0}/${max}<br/>
+      <span style="font-size:.62rem;opacity:.7;white-space:pre-wrap">${esc(s.ft_error.slice(0,300))}</span>
+    </div>`;
+  } else if (health && health.last_error && !ftApiOk) {
+    bFt.innerHTML = `<div class="banner banner-warn" style="font-size:.65rem">
+      FT API: ${esc(health.last_error)}
+      ${health.last_ok ? ` — last ok: ${health.last_ok}` : ''}
+    </div>`;
+  } else {
+    bFt.innerHTML = '';
+  }
+
+  // Metric cards
+  const m   = s.metrics || {};
+  const gen = s.current_gen || 0;
+  const wr  = m.win_rate, pf = m.profit_factor, sh = m.sharpe;
+  const mdd = m.max_drawdown, pnl = m.total_pnl, tot = m.total;
+  document.getElementById('cards').innerHTML = [
+    card('Generation', `#${gen}`, 'c-amber', 'cv-amber'),
+    card('Win Rate',
+         wr != null ? `${(wr*100).toFixed(1)}%` : '—',
+         wr>0.5 ? 'c-green':'c-red', wr>0.5?'cv-green':'cv-red'),
+    card('Profit Factor',
+         pf != null ? pf.toFixed(2) : '—',
+         pf>1.5?'c-green':'c-red', pf>1.5?'cv-green':'cv-red'),
+    card('Sharpe',
+         sh != null ? sh.toFixed(2) : '—',
+         sh>1?'c-blue':'c-amber', sh>1?'cv-blue':'cv-amber'),
+    card('Max Drawdown',
+         mdd != null ? `${(mdd*100).toFixed(1)}%` : '—',
+         mdd>0.1?'c-red':'c-green', mdd>0.1?'cv-red':'cv-green'),
+    card(`PnL (${tot||0} trades)`,
+         pnl != null ? (pnl>0?'+':'')+pnl.toFixed(4) : '—',
+         pnl>0?'c-green':'c-red', pnl>0?'cv-green':'cv-red'),
+  ].join('');
+
+  // Loss bar
+  const losses = s.consecutive_losses || 0;
+  const thresh = s.trigger_threshold || 3;
+  const pct    = Math.min(losses/Math.max(thresh,1),1)*100;
+  const barCol = losses===0 ? 'var(--green)' : pct<100 ? 'var(--amber)' : 'var(--red)';
+  document.getElementById('lossbar').style.cssText = `width:${pct.toFixed(0)}%;background:${barCol}`;
+  let lossExtra = '';
+  if (s.monitoring) lossExtra = ` · 🔭 rollback ${s.monitoring_trades||0}/${s.monitoring_target||5}`;
+  document.getElementById('loss-txt').textContent = `losses: ${losses}/${thresh}${lossExtra}`;
+
+  // Sidebar FT status
+  const pid = s.ft_pid ? ` · pid ${s.ft_pid}` : '';
+  document.getElementById('ft-status-detail').textContent = `status: ${s.ft_status||'—'}${pid}`;
+
+  // Rollback select
+  if (_checkpoints.length && document.getElementById('rb-select').options.length <= 1) {
+    populateRbSelect(gen);
+  }
+}
+
+function card(label, value, accent, vcls) {
+  return `<div class="card ${accent}">
+    <div class="card-label">${label}</div>
+    <div class="card-value ${vcls}">${value}</div>
+  </div>`;
+}
+
+// ── Render logs ───────────────────────────────────────────────
+function renderLogs(logs) {
+  if (_currentTab !== 'logs') return;
+  const box = document.getElementById('logbox');
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  box.innerHTML = logs.map(e => {
+    const cls = {WARNING:'ll-w',ERROR:'ll-e'}[e.level] || 'll-i';
+    const msg = esc(e.msg||'').replace(/\n/g,'<br/>');
+    return `<div class="ll ${cls}"><span class="lts">${e.ts||''}</span><span class="llv">[${(e.level||'').slice(0,4)}]</span>${msg}</div>`;
+  }).join('');
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+// ── Load code ─────────────────────────────────────────────────
+async function loadCode() {
+  const s = _state;
+  const sdir = ''; // we'll ask the server to give us the content via ft-log endpoint
+  // Fetch current strategy via ft-log as a workaround — actually fetch from state path
+  // The simplest approach: read ft-log for last lines, or we just rely on ft-startup
+  // For code we do a dedicated fetch of the strategy via the /api/ft-log endpoint
+  // Actually let's just show a note — the code is in the checkpoint
+  try {
+    const r = await fetch('/api/checkpoints');
+    const ckpts = await r.json();
+    if (!ckpts.length) {
+      document.getElementById('code-content').innerHTML =
+        '<p style="color:var(--muted);padding:20px;font-family:var(--mono);font-size:.75rem">No checkpoints yet.</p>';
+      return;
+    }
+    // show latest gen info
+    const latest = ckpts[ckpts.length-1];
+    document.getElementById('code-content').innerHTML =
+      `<p style="font-family:var(--mono);font-size:.65rem;color:var(--muted);margin-bottom:8px">
+        Gen #${latest.generation} — ${latest.created_at||''} — ${latest.trigger_reason||''}
+      </p>
+      <div class="codebox"><pre>Strategy code is on disk at the configured strategies_dir path.\n\nCheckpoint metrics for gen ${latest.generation}:\n${JSON.stringify(latest.metrics_summary||{},null,2)}</pre></div>`;
+  } catch(e) {
+    document.getElementById('code-content').innerHTML = '<p style="color:var(--red);padding:20px">Error loading</p>';
+  }
+}
+
+// ── Load config ───────────────────────────────────────────────
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/state');
+    const s = await r.json();
+    // We can't serve the raw config.yaml easily without an endpoint
+    // Show useful state info instead
+    document.getElementById('config-content').innerHTML =
+      `<div class="cfgbox"><pre>${esc(JSON.stringify(s, null, 2))}</pre></div>`;
+  } catch(e) {
+    document.getElementById('config-content').innerHTML = '<p style="color:var(--red);padding:20px">Error loading</p>';
+  }
+}
+
+// ── Load startup log ──────────────────────────────────────────
+async function loadStartupLog() {
+  try {
+    const r = await fetch('/api/ft-startup');
+    const d = await r.json();
+    document.getElementById('startup-log').textContent = d.text || '(empty)';
+  } catch(e) {
+    document.getElementById('startup-log').textContent = 'Error: ' + e.message;
+  }
+}
+
+// ── Load checkpoints ──────────────────────────────────────────
+async function loadCheckpoints() {
+  try {
+    const r = await fetch('/api/checkpoints');
+    _checkpoints = await r.json();
+    _checkpointsLoaded = true;
+    renderCheckpoints();
+    populateRbSelect(_state.current_gen || 0);
+  } catch(e) {}
+}
+
+function renderCheckpoints() {
+  const gen = _state.current_gen || 0;
+  const grid = document.getElementById('ckpt-grid');
+  if (!_checkpoints.length) { grid.innerHTML = '<p style="color:var(--muted);font-size:.75rem">No checkpoints.</p>'; return; }
+  grid.innerHTML = [..._checkpoints].reverse().slice(0,10).map(c => {
+    const ms = c.metrics_summary || {};
+    const isCur = c.generation === gen;
+    return `<div class="ckpt ${isCur?'current':''}">
+      <div class="ckpt-gen">Gen ${c.generation}${isCur?' ← current':''}</div>
+      <div class="ckpt-row">PF: ${ms.profit_factor??'—'}</div>
+      <div class="ckpt-row">WR: ${ms.win_rate??'—'}</div>
+      <div class="ckpt-row">DD: ${ms.max_drawdown??'—'}</div>
+      <div class="ckpt-row" style="color:#1e3050">${(c.created_at||'').slice(0,16)}</div>
+      <div class="ckpt-row" style="color:#2d4060;margin-top:3px;font-size:.62rem">${esc((c.changelog||'').slice(0,60))}</div>
+    </div>`;
+  }).join('');
+
+  // Evo history placeholder
+  const evoContent = document.getElementById('evo-content');
+  evoContent.innerHTML = `<p style="font-family:var(--mono);font-size:.7rem;color:var(--muted)">
+    ${_checkpoints.length} generations saved. Latest: gen #${_checkpoints[_checkpoints.length-1]?.generation||0}
+  </p>`;
+}
+
+function populateRbSelect(currentGen) {
+  const sel = document.getElementById('rb-select');
+  sel.innerHTML = '<option value="">— select generation —</option>' +
+    _checkpoints
+      .filter(c => c.generation !== currentGen)
+      .sort((a,b) => b.generation - a.generation)
+      .map(c => `<option value="${c.generation}">Gen ${c.generation} — ${(c.created_at||'').slice(0,16)}</option>`)
+      .join('');
+}
+
+// ── WebSocket ─────────────────────────────────────────────────
+function connectWs() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  _ws = new WebSocket(`${protocol}//${location.host}/ws`);
+
+  _ws.onopen = () => {
+    _wsRetries = 0;
+    document.getElementById('ws-dot').classList.add('ok');
+  };
+
+  _ws.onmessage = (ev) => {
+    try {
+      const d = JSON.parse(ev.data);
+      _state  = d.state  || _state;
+      _health = d.health || _health;
+      renderState(_state, _health);
+      renderToggles();
+      renderLogs(d.logs || []);
+      document.getElementById('ws-ts').textContent = new Date().toLocaleTimeString();
+      if (!_checkpointsLoaded) loadCheckpoints();
+    } catch(e) {}
+  };
+
+  _ws.onclose = () => {
+    document.getElementById('ws-dot').classList.remove('ok');
+    const delay = Math.min(1000 * Math.pow(1.5, _wsRetries++), 15000);
+    setTimeout(connectWs, delay);
+  };
+
+  _ws.onerror = () => _ws.close();
+}
+
+// ── Helpers ───────────────────────────────────────────────────
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function isOrchAlive(s) {
+  if (!s.orch_alive) return false;
+  try {
+    const ts  = new Date(s.orch_alive.replace(' ', 'T').replace(/ \+/, '+').replace(/ -/, '-'));
+    const age = (Date.now() - ts.getTime()) / 1000;
+    return age < 180; // 3 × 60 s default poll
+  } catch { return false; }
+}
+
+function orchAge(s) {
+  if (!s.orch_alive) return null;
+  try {
+    const ts = new Date(s.orch_alive.replace(' ', 'T').replace(/ \+/, '+').replace(/ -/, '-'));
+    return Math.floor((Date.now() - ts.getTime()) / 1000);
+  } catch { return null; }
+}
+
+// ── Boot ──────────────────────────────────────────────────────
+connectWs();
+loadCheckpoints();
+</script>
+</body>
+</html>
