@@ -4,6 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>AutoEvolve</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧬</text></svg>">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700&display=swap');
 :root{
@@ -40,6 +41,34 @@ a{color:var(--blue);text-decoration:none}
 .tog input:checked+.tog-sl{background:rgba(0,208,132,.12);border-color:#00d08450}
 .tog input:checked+.tog-sl::before{transform:translateX(22px);background:var(--green)}
 .tog-state{font-size:.6rem;font-family:var(--mono)}
+  /* ── Trades table ── */
+  .trade-table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:.65rem}
+  .trade-table th{color:var(--muted);font-weight:500;text-align:left;padding:5px 8px;border-bottom:1px solid var(--border2);white-space:nowrap}
+  .trade-table td{padding:4px 8px;border-bottom:1px solid var(--border);white-space:nowrap;vertical-align:middle}
+  .trade-table tr:hover td{background:#0a1a2a}
+  .t-pair{color:#8ab4d4;font-weight:600}
+  .t-win{color:var(--green)}
+  .t-loss{color:var(--red)}
+  .t-tag{color:var(--muted);font-size:.6rem;max-width:120px;overflow:hidden;text-overflow:ellipsis}
+  .t-dir-long{color:#5090d0}
+  .t-dir-short{color:#d08050}
+  .t-open{color:var(--amber)}
+  .trade-summary{font-family:var(--mono);font-size:.63rem;color:var(--muted);padding:6px 2px;margin-bottom:6px}
+
+  /* ── Trigger panel ── */
+  .trig-panel{background:#020c18;border:1px solid var(--border2);border-radius:6px;padding:10px 12px;margin-bottom:10px}
+  .trig-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:.65rem}
+  .trig-row:last-child{border-bottom:none}
+  .trig-label{color:var(--muted)}
+  .trig-val{font-weight:600}
+  .trig-ok{color:var(--green)}
+  .trig-warn{color:var(--amber)}
+  .trig-hot{color:var(--red)}
+  .trig-dim{color:#1e3050}
+  /* ── Error panel ── */
+  .err-panel{background:#0d0307;border:1px solid #3a0a12;border-radius:6px;padding:10px 12px;margin-bottom:10px;display:none}
+  .err-title{font-size:.68rem;font-family:var(--mono);color:var(--red);font-weight:700;margin-bottom:6px;letter-spacing:.05em}
+  .err-body{font-family:var(--mono);font-size:.62rem;color:#e8a0a8;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow-y:auto;line-height:1.5}
 .btn-row{display:flex;gap:4px}
 .btn-row .btn{text-align:center}
 select{width:100%;padding:5px 8px;background:var(--panel);border:1px solid var(--border2);border-radius:4px;color:var(--text);font-family:var(--mono);font-size:.72rem;margin-top:4px}
@@ -158,10 +187,12 @@ tr:hover td{background:rgba(255,255,255,.015)}
   </div>
 
   <div class="sh">⚡ AutoEvolve</div>
+  <div style="font-size:.6rem;font-family:var(--mono);color:var(--muted);margin-bottom:4px">next evolve: <span id="evo-countdown" style="color:var(--amber)">—</span></div>
   <button class="btn" onclick="ctrl('force_evolve')">🔥 Force Evolution</button>
   <button class="btn" style="margin-top:3px" onclick="ctrl('reload_config')">↺ Reload Config</button>
 
   <div class="sh">🤖 FreqTrade</div>
+  <div style="font-size:.6rem;font-family:var(--mono);color:var(--muted);margin-bottom:4px">uptime: <span id="ft-uptime" style="color:var(--green)">—</span></div>
   <button class="btn" onclick="ctrl('restart_ft')">↻ Restart FT</button>
   <button class="btn" style="margin-top:3px" onclick="ctrl('reload_ft')">↺ Hot-Reload Config</button>
   <div class="sidebar-status" id="ft-status-detail">status: —</div>
@@ -193,6 +224,18 @@ tr:hover td{background:rgba(255,255,255,.015)}
 
   <!-- Metric cards -->
   <div class="cards" id="cards"></div>
+  <div id="metrics-hint" style="display:none;font-size:.62rem;font-family:var(--mono);color:var(--muted);padding:4px 2px">ℹ No trades yet — verify <b>freqtrade.db_path</b> in config.yaml matches your FT database file</div>
+
+  <!-- Strategy Error Panel -->
+  <div class="err-panel" id="err-panel">
+    <div class="err-title">⚠ STRATEGY ERROR — AUTO-FIX IN PROGRESS</div>
+    <div class="err-body" id="err-body">—</div>
+  </div>
+
+  <!-- Trigger Status Panel -->
+  <div class="trig-panel" id="trig-panel">
+    <div id="trig-rows">—</div>
+  </div>
 
   <!-- Loss bar -->
   <div class="lossrow">
@@ -217,7 +260,26 @@ tr:hover td{background:rgba(255,255,255,.015)}
 
   <!-- Trades tab -->
   <div class="tabpanel" id="tab-trades">
-    <div id="trades-content"><p style="color:var(--muted);font-size:.8rem;padding:20px">Loading trades…</p></div>
+    <div id="trades-summary" class="trade-summary">—</div>
+    <table class="trade-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Pair</th>
+          <th>Dir</th>
+          <th>Lev</th>
+          <th>Profit %</th>
+          <th>Profit USDT</th>
+          <th>Duration</th>
+          <th>Entry tag</th>
+          <th>Close time</th>
+          <th>Exit reason</th>
+        </tr>
+      </thead>
+      <tbody id="trades-body">
+        <tr><td colspan="9" style="color:var(--muted);padding:20px">Loading…</td></tr>
+      </tbody>
+    </table>
   </div>
 
   <!-- Evolution tab -->
@@ -272,6 +334,7 @@ function showTab(name) {
   if (name === 'config')  loadConfig();
   if (name === 'startup') loadStartupLog();
   if (name === 'evo' && !_checkpointsLoaded) loadCheckpoints();
+  if (name === 'trades')  renderTrades();
 }
 
 // ── Toast ──────────────────────────────────────────────────────
@@ -282,11 +345,172 @@ function toast(msg) {
 }
 
 // ── Control ───────────────────────────────────────────────────
+function renderTrades() {
+  const trades = (_state.recent_trades || []).slice().reverse(); // newest first
+  const m      = (_state.metrics || {});
+  const body   = document.getElementById('trades-body');
+  const sumEl  = document.getElementById('trades-summary');
+  if (!body) return;
+
+  // Summary line
+  const tot    = _state.total_trades || 0;
+  const open   = _state.open_trades  || 0;
+  const wr     = m.win_rate  != null ? (m.win_rate * 100).toFixed(1) + '%' : '—';
+  const pf     = m.profit_factor != null ? m.profit_factor.toFixed(2) : '—';
+  const pnl    = m.total_pnl != null ? (m.total_pnl >= 0 ? '+' : '') + m.total_pnl.toFixed(4) : '—';
+  if (sumEl) sumEl.textContent =
+    `${tot} closed · ${open} open  |  WR ${wr}  PF ${pf}  PnL ${pnl} USDT  (showing last ${trades.length})`;
+
+  if (!trades.length) {
+    body.innerHTML = '<tr><td colspan="10" style="color:var(--muted);padding:20px">No closed trades yet</td></tr>';
+    return;
+  }
+
+  body.innerHTML = trades.map((t, i) => {
+    const pct     = (t.profit_pct != null ? t.profit_pct : 0);
+    const abs     = (t.profit_abs != null ? t.profit_abs : 0);
+    const win     = pct > 0;
+    const pCls    = win ? 't-win' : 't-loss';
+    const pSign   = pct > 0 ? '+' : '';
+    const dir     = t.is_short ? '<span class="t-dir-short">SHORT</span>' : '<span class="t-dir-long">LONG</span>';
+    const lev     = t.leverage && t.leverage !== 1 ? `${t.leverage}×` : '—';
+    const dur     = t.duration_min > 60
+      ? `${Math.floor(t.duration_min/60)}h ${Math.round(t.duration_min%60)}m`
+      : `${t.duration_min}m`;
+    const tag     = esc(t.enter_tag  || '—');
+    const reason  = esc(t.exit_reason || '—');
+    const rowNum  = tot - i;
+    return `<tr>
+      <td style="color:var(--muted)">${rowNum}</td>
+      <td class="t-pair">${esc(t.pair)}</td>
+      <td>${dir}</td>
+      <td>${lev}</td>
+      <td class="${pCls}">${pSign}${pct.toFixed(3)}%</td>
+      <td class="${pCls}">${pct > 0 ? '+' : ''}${abs.toFixed(4)}</td>
+      <td style="color:var(--muted)">${dur}</td>
+      <td class="t-tag" title="${tag}">${tag}</td>
+      <td style="color:var(--muted);font-size:.6rem">${esc(t.close_date||'—')}</td>
+      <td class="t-tag" title="${reason}">${reason}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderTriggers() {
+  const s  = _state;
+  const ts = s.trigger_status || {};
+  const m  = s.monitoring;
+  const rows = [];
+
+  function row(label, val, cls) {
+    return `<div class="trig-row"><span class="trig-label">${label}</span><span class="trig-val ${cls}">${val}</span></div>`;
+  }
+
+  // Status
+  const statusMap = {
+    running: ['WATCHING', 'trig-ok'],
+    paused:  ['PAUSED', 'trig-dim'],
+    evolving:['EVOLVING…', 'trig-warn'],
+    fixing_ft_error: ['FIXING ERROR', 'trig-hot'],
+    monitoring: ['MONITORING NEW GEN', 'trig-warn'],
+  };
+  const [stLbl, stCls] = statusMap[s.status] || ['UNKNOWN', 'trig-dim'];
+  rows.push(row('Status', stLbl, stCls));
+
+  // Cooldown
+  const cd = ts.cooldown_remaining_min || s.cooldown_remaining || 0;
+  if (cd > 0) {
+    const mm = Math.floor(cd), ss = Math.round((cd - mm) * 60);
+    rows.push(row('Cooldown', `${mm}m ${ss}s remaining`, 'trig-warn'));
+  } else {
+    rows.push(row('Cooldown', 'none — ready to trigger', 'trig-ok'));
+  }
+
+  // Trade count gate
+  const tot = ts.trades_total ?? s.total_trades ?? 0;
+  const need = ts.trades_needed ?? 0;
+  const minT = ts.trades_min ?? 0;
+  if (need > 0) {
+    rows.push(row('Trade gate', `${tot} / ${minT} trades  (need ${need} more)`, 'trig-warn'));
+  } else {
+    rows.push(row('Trade gate', `${tot} trades ✓`, 'trig-ok'));
+  }
+
+  // Loss trigger
+  const lc = ts.loss_current ?? s.consecutive_losses ?? 0;
+  const lt = ts.loss_threshold ?? s.trigger_threshold ?? 3;
+  const lPct = Math.min(lc / Math.max(lt, 1), 1);
+  const lCls = lc === 0 ? 'trig-ok' : lPct >= 1 ? 'trig-hot' : 'trig-warn';
+  rows.push(row('Loss trigger', `${lc} / ${lt} consecutive losses`, lCls));
+
+  // Idle trigger
+  const idleElapsed = ts.idle_elapsed_min;
+  const idleThresh  = ts.idle_threshold_min;
+  if (idleThresh) {
+    const ie = idleElapsed ?? 0;
+    const iRem = Math.max(0, idleThresh - ie);
+    const iCls = ie >= idleThresh ? 'trig-hot' : ie > idleThresh * 0.7 ? 'trig-warn' : 'trig-ok';
+    const iStr = ie >= idleThresh
+      ? `${ie.toFixed(1)}m idle — TRIGGER READY`
+      : `${ie.toFixed(1)}m idle  (${iRem.toFixed(1)}m until trigger)`;
+    rows.push(row('Idle trigger', iStr, iCls));
+  } else {
+    rows.push(row('Idle trigger', 'disabled', 'trig-dim'));
+  }
+
+  // Profit drawdown trigger
+  const ddCur   = ts.dd_current_pct;
+  const ddThresh = ts.dd_threshold_pct || 0;
+  if (ddThresh > 0) {
+    if (ddCur == null) {
+      rows.push(row('Profit drawdown', `waiting for ${ts.trades_min||0} trades`, 'trig-dim'));
+    } else {
+      const ddFill = Math.min(ddCur / ddThresh, 1);
+      const ddCls  = ddFill >= 1 ? 'trig-hot' : ddFill >= 0.7 ? 'trig-warn' : 'trig-ok';
+      const peak   = ts.dd_peak_pnl   != null ? ts.dd_peak_pnl.toFixed(4)   : '—';
+      const cur    = ts.dd_current_pnl != null ? ts.dd_current_pnl.toFixed(4): '—';
+      rows.push(row('Profit drawdown',
+        `${ddCur.toFixed(1)}% / ${ddThresh}% from peak  (peak ${peak} → now ${cur} USDT)`,
+        ddCls));
+    }
+  } else {
+    rows.push(row('Profit drawdown', 'disabled', 'trig-dim'));
+  }
+
+  // Monitoring window
+  if (m) {
+    const mt = s.monitoring_trades || 0;
+    const mn = s.monitoring_target || 5;
+    rows.push(row('Monitoring', `${mt} / ${mn} trades after deploy`, 'trig-warn'));
+  }
+
+  // Next evo
+  const cdEl = document.getElementById('evo-countdown');
+  if (cdEl) {
+    if (s.status === 'evolving') { cdEl.textContent = 'evolving now…'; cdEl.style.color = 'var(--blue)'; }
+    else if (cd > 0) { const mm=Math.floor(cd),ss=Math.round((cd-mm)*60); cdEl.textContent=`${mm}m ${ss}s cooldown`; cdEl.style.color='var(--amber)'; }
+    else if (need > 0) { cdEl.textContent=`waiting ${need} more trades`; cdEl.style.color='var(--muted)'; }
+    else if (s.paused) { cdEl.textContent='paused'; cdEl.style.color='var(--muted)'; }
+    else { cdEl.textContent='ready to trigger'; cdEl.style.color='var(--green)'; }
+  }
+
+  document.getElementById('trig-rows').innerHTML = rows.join('');
+
+  // Error panel
+  const ep = document.getElementById('err-panel');
+  const eb = document.getElementById('err-body');
+  const hasErr = s.status === 'fixing_ft_error' || s.ft_error_full || s.ft_error;
+  if (ep) ep.style.display = hasErr ? 'block' : 'none';
+  if (eb && hasErr) eb.textContent = s.ft_error_full || s.ft_error || '(reading error…)';
+}
+
 function renderToggles() {
   const ed = (_state.evolve_desired || 'stopped');
   const fd = (_state.ft_desired     || 'stopped');
   const te = document.getElementById('tog-evolve');
   const tf = document.getElementById('tog-ft');
+  // Auto-clear busy when server state matches intent
+  if (te && te._busy && te.checked === (ed === 'running')) { te._busy = false; te.disabled = false; }
+  if (tf && tf._busy && tf.checked === (fd === 'running')) { tf._busy = false; tf.disabled = false; }
   if (te && !te._busy) te.checked = (ed === 'running');
   if (tf && !tf._busy) tf.checked = (fd === 'running');
   const es = document.getElementById('tog-evolve-st');
@@ -300,7 +524,8 @@ async function toggleDesired(which, on) {
   if (el) el._busy = true;
   if (which === 'evolve') await ctrl(on ? 'resume' : 'pause');
   else                    await ctrl(on ? 'start_ft' : 'stop_ft');
-  setTimeout(() => { if (el) el._busy = false; }, 2500);
+  // Release busy lock when server confirms state (max 15s)
+  setTimeout(() => { if (el) { el._busy = false; el.disabled = false; } }, 15000);
 }
 
 async function ctrl(action, extra={}) {
@@ -365,10 +590,10 @@ function renderState(s, health) {
   // FT error banner
   const bFt = document.getElementById('banner-ft-err');
   if (s.ft_error) {
+    // Full error shown in error panel — just show compact banner
     const max = 5;
     bFt.innerHTML = `<div class="banner banner-err">
-      ⚠ FT STRATEGY ERROR — auto-fix attempt ${s.ft_error_count||0}/${max}<br/>
-      <span style="font-size:.62rem;opacity:.7;white-space:pre-wrap">${esc(s.ft_error.slice(0,300))}</span>
+      ⚠ FT STRATEGY ERROR — auto-fix attempt ${s.ft_error_count||0}/${max} — see error panel below
     </div>`;
   } else if (health && health.last_error && !ftApiOk) {
     bFt.innerHTML = `<div class="banner banner-warn" style="font-size:.65rem">
@@ -402,6 +627,8 @@ function renderState(s, health) {
          pnl != null ? (pnl>0?'+':'')+pnl.toFixed(4) : '—',
          pnl>0?'c-green':'c-red', pnl>0?'cv-green':'cv-red'),
   ].join('');
+  const hintEl = document.getElementById('metrics-hint');
+  if (hintEl) hintEl.style.display = (!tot || tot === 0) ? 'block' : 'none';
 
   // Loss bar
   const losses = s.consecutive_losses || 0;
@@ -416,6 +643,25 @@ function renderState(s, health) {
   // Sidebar FT status
   const pid = s.ft_pid ? ` · pid ${s.ft_pid}` : '';
   document.getElementById('ft-status-detail').textContent = `status: ${s.ft_status||'—'}${pid}`;
+
+  // (countdown handled in renderTriggers)
+
+  // FT uptime
+  const utEl = document.getElementById('ft-uptime');
+  if (utEl) {
+    if (s.ft_started_at && s.ft_running) {
+      try {
+        // Normalize "2026-02-26 14:30:00 +02:00" → "2026-02-26T14:30:00+02:00"
+        const iso = s.ft_started_at.replace(' ', 'T').replace(/\s+([+-]\d{2}:\d{2})$/, '$1');
+        const started = new Date(iso);
+        const d = isNaN(started) ? 0 : Date.now() - started.getTime();
+        const h=Math.floor(d/3600000), m=Math.floor((d%3600000)/60000), sec=Math.floor((d%60000)/1000);
+        utEl.textContent = h>0 ? `${h}h ${m}m` : m>0 ? `${m}m ${sec}s` : `${sec}s`;
+        utEl.style.color = 'var(--green)';
+      } catch(e) { utEl.textContent='—'; }
+    } else { utEl.textContent = s.ft_running ? '—' : 'stopped'; utEl.style.color='var(--muted)'; }
+  }
+
 
   // Rollback select
   if (_checkpoints.length && document.getElementById('rb-select').options.length <= 1) {
@@ -490,11 +736,15 @@ async function loadStartupLog() {
   try {
     const r = await fetch('/api/ft-startup');
     const d = await r.json();
-    document.getElementById('startup-log').textContent = d.text || '(empty)';
+    const el = document.getElementById('startup-log');
+    el.textContent = d.text || '(no output yet — start FreqTrade first)';
+    el.scrollTop = el.scrollHeight;
   } catch(e) {
     document.getElementById('startup-log').textContent = 'Error: ' + e.message;
   }
 }
+// Auto-refresh startup log every 3s when on that tab
+setInterval(() => { if (_currentTab === 'startup') loadStartupLog(); }, 3000);
 
 // ── Load checkpoints ──────────────────────────────────────────
 async function loadCheckpoints() {
@@ -558,6 +808,8 @@ function connectWs() {
       _health = d.health || _health;
       renderState(_state, _health);
       renderToggles();
+      renderTriggers();
+      if (_currentTab === 'trades') renderTrades();
       renderLogs(d.logs || []);
       document.getElementById('ws-ts').textContent = new Date().toLocaleTimeString();
       if (!_checkpointsLoaded) loadCheckpoints();
