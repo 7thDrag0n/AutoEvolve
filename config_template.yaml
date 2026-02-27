@@ -17,6 +17,10 @@ freqtrade:
   strategies_dir: "~/freqtrade/user_data/strategies"
   db_path:        "~/freqtrade/user_data/tradesv3.sqlite"
   strategy_name:  "AutoEvolveStrategy"
+  initial_strategy_file: ""  # optional: path to a .py file to use as gen 1 seed
+  reset_db_after_evolve: true  # wipe trade DB after each successful evolution (recommended)
+                              # if empty, uses the built-in 15m baseline template
+                              # example: "D:/my_strategies/MyStrategy5m.py"
 
   # FreqTrade REST API (for hot-reload without restart)
   api:
@@ -36,16 +40,39 @@ freqtrade:
   ft_error_max_fix_attempts: 5
 
 # ── Evolution triggers ────────────────────────────────────────
+evolution:
+  exploration_mode: "adaptive"   # conservative=fix basics | adaptive=auto | aggressive=always try new
+  concepts_to_try:
+    - "smart_money_concepts"        # Order blocks, FVG, liquidity sweeps, BOS/CHoCH
+    - "support_resistance_pivots"   # Swing highs/lows, volume nodes, key S/R levels
+    - "multi_timeframe_filter"      # Only trade in direction of 1h/4h trend
+    - "volume_analysis"             # Volume delta, OBV, VWAP, volume profile
+    - "dynamic_stoploss_atr"        # ATR-scaled stops, trail after partial profit
+    - "dynamic_leverage"            # Scale leverage with volatility (low ATR=high lev)
+    - "entry_confluence"            # Require 2+ independent signals before entry
+    - "partial_exit_scaling"        # Scale out in tranches (50% at 1R, trail rest)
+    - "regime_filter"               # Detect trending vs ranging, switch strategy mode
+    - "candlestick_patterns"        # Engulfing, pin bar, inside bar, hammer at S/R
+
 trigger:
   consecutive_losses:        3     # evolve after N consecutive losing trades
   min_trades_before_trigger: 10    # don't trigger until at least N trades closed
   cooldown_minutes:          60    # minimum minutes between evolutions
+  idle_trigger_minutes:      5     # evolve if no open trades for this many minutes (0 = disabled)
+
+  # Profit drawdown trigger — fires when cumulative PnL drops X% from its
+  # session peak, even if win rate still looks healthy.
+  # Example: peak was +10 USDT, drawdown_pct=20 → triggers if PnL falls to +8 USDT.
+  # Set to 0 to disable.
+  profit_drawdown_pct:         20    # trigger if PnL drops X% from its peak (0 = disabled)
+  profit_drawdown_min_trades:  5     # minimum closed trades before this trigger activates
 
 # ── Rollback ──────────────────────────────────────────────────
 rollback:
   evaluate_after_n_trades:    5     # trades to observe post-deploy before deciding
   rollback_if_winrate_below:  0.35  # rollback if win rate drops below 35%
   rollback_if_drawdown_above: 0.15  # rollback if drawdown exceeds 15%
+  monitoring_timeout_minutes: 60   # exit monitoring if no trades for this long
 
 # ── Checkpoints ───────────────────────────────────────────────
 checkpoints:
@@ -61,9 +88,22 @@ optimization:
     max_drawdown:  0.10
 
 # ── LLM Provider ──────────────────────────────────────────────
-# provider options: anthropic | openai | openrouter | chutes | ollama
+# provider: set to any name below. anthropic and ollama are special-cased.
+# Any other name (openai, openrouter, chutes, or your own custom name) is
+# treated as an OpenAI-compatible REST endpoint — just define a config block
+# with the same name containing: model, api_key (or api_key_env), base_url.
+# Example custom provider:
+#   llm:
+#     provider: "myprovider"
+#     myprovider:
+#       model: "my-model"
+#       base_url: "https://api.myprovider.com/v1"
+#       api_key: "sk-..."
+#       max_tokens: 8192
 llm:
   provider: "anthropic"
+  timeout:  600        # seconds for all LLM providers (deepseek can be slow)
+  max_prompt_tokens: 50000   # trim prompt if over this size (~4 chars/token)
 
   anthropic:
     model:       "claude-opus-4-6"
@@ -87,7 +127,8 @@ llm:
   chutes:
     # Any model slug from https://chutes.ai
     model:       "deepseek-ai/DeepSeek-R1"
-    api_key_env: "CHUTES_API_KEY"
+    api_key:     ""              # paste key directly here, OR use api_key_env below
+    api_key_env: "CHUTES_API_KEY"   # env var name (used only if api_key is empty)
     base_url:    "https://llm.chutes.ai/v1"
     max_tokens:  8192
 
