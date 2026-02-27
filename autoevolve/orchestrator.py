@@ -75,19 +75,23 @@ class Orchestrator:
         ft_desired     = stale.get("ft_desired",     "stopped")
         evolve_desired = stale.get("evolve_desired", "stopped")
 
-        # Clear stale ft_pid from previous crashed session
-        if stale.get("ft_pid"):
-            write_state({"ft_pid": None, "ft_status": "unknown", "ft_running": False})
-
         self._paused = (evolve_desired != "running")
 
+        # Check if FT is actually alive right now (before clearing stale PID)
+        ft_actually_running = self.ft.is_running()
+
+        # Now clear stale pid/status from state (does NOT touch ft_desired)
         write_state({
             "current_gen":    self._current_gen,
             "status":         "running" if not self._paused else "paused",
             "paused":         self._paused,
             "monitoring":     False,
-            "ft_running":     self.ft.is_running(),
+            "ft_running":     ft_actually_running,
+            "ft_pid":         None,           # cleared until FT.start() sets it
+            "ft_status":      "stopped" if not ft_actually_running else "running",
+            "ft_started_at":  None,           # cleared — stale uptime from prev session
             "ft_error":       None,
+            "ft_error_full":  None,
             "ft_error_count": 0,
             "ft_desired":     ft_desired,
             "evolve_desired": evolve_desired,
@@ -95,9 +99,11 @@ class Orchestrator:
             "orch_alive":     local_str(),
         })
 
-        if ft_desired == "running" and not self.ft.is_running():
-            append_log("INFO", "ft_desired=running — auto-starting FreqTrade")
+        if ft_desired == "running" and not ft_actually_running:
+            append_log("INFO", "ft_desired=running — auto-starting FreqTrade on restart")
             self.ft.start()
+        elif ft_desired == "running" and ft_actually_running:
+            append_log("INFO", "ft_desired=running — FreqTrade already running, not restarting")
 
         append_log("INFO",
             f"Orchestrator initialised — gen {self._current_gen} "
@@ -115,6 +121,7 @@ class Orchestrator:
                 msg = f"Tick error: {e}"
                 logger.error(msg, exc_info=True)
                 append_log("ERROR", msg)
+            write_state({"orch_alive": local_str()})  # heartbeat — written even during LLM
             time.sleep(poll)
 
     # ── Single tick (called by main.py every poll seconds) ────
@@ -125,6 +132,17 @@ class Orchestrator:
 
         ft_running = self.ft.is_running()
         write_state({"ft_running": ft_running})
+
+        # ── Always refresh metrics regardless of state ───────────
+        # (paused and monitoring both previously skipped this, leaving dashboard stale)
+        _snap_always = self.harvester.snapshot()
+        write_state({
+            "total_trades":  _snap_always.get("total_closed", 0),
+            "open_trades":   _snap_always.get("total_open", 0),
+            "metrics":       _snap_always.get("metrics", {}),
+            "recent_trades": _snap_always.get("recent", []),
+            "snapshot_at":   local_str(),
+        })
 
         if self._paused:
             write_state({"paused": True, "status": "paused", "evolve_desired": "stopped"})
@@ -138,22 +156,53 @@ class Orchestrator:
             return
 
         # ── Evolution trigger ──────────────────────────────────
-        losses    = self.harvester.consecutive_losses()
-        threshold = cfg("trigger", "consecutive_losses",        default=3)
-        min_t     = cfg("trigger", "min_trades_before_trigger", default=10)
-        cooldown  = cfg("trigger", "cooldown_minutes",          default=60)
+        threshold  = cfg("trigger", "consecutive_losses",        default=3)
+        min_t      = cfg("trigger", "min_trades_before_trigger", default=10)
+        cooldown   = cfg("trigger", "cooldown_minutes",          default=60)
+        dd_pct     = cfg("trigger", "profit_drawdown_pct",        default=0)
+        dd_min     = cfg("trigger", "profit_drawdown_min_trades", default=5)
+        idle_min   = cfg("trigger", "idle_trigger_minutes",       default=0)
 
-        snap  = self.harvester.snapshot()
-        total = snap.get("total_closed", 0)
+        snap   = _snap_always
+        losses = snap.get("consecutive_losses", 0)
+        total  = snap.get("total_closed", 0)
 
+        # Compute countdown to next possible evolution
+        cooldown_remaining = 0
+        if self._last_evo:
+            elapsed_min = (datetime.now().astimezone() - self._last_evo).total_seconds() / 60
+            cooldown_remaining = max(0, round(cooldown - elapsed_min, 1))
+
+        # FT uptime
+        ft_pid = read_state().get("ft_pid")
+        ft_started = read_state().get("ft_started_at", "")
+
+        # Full trigger status — everything the dashboard needs to show
         write_state({
-            "status":             "running",
-            "current_gen":        self._current_gen,
-            "consecutive_losses": losses,
-            "trigger_threshold":  threshold,
-            "total_trades":       total,
-            "metrics":            snap.get("metrics", {}),
-            "snapshot_at":        local_str(),
+            "status":               "running",
+            "current_gen":          self._current_gen,
+            "consecutive_losses":   losses,
+            "trigger_threshold":    threshold,
+            "total_trades":         total,
+            "metrics":              snap.get("metrics", {}),
+            "snapshot_at":          local_str(),
+            "cooldown_remaining":   cooldown_remaining,
+            "last_evo_at":          self._last_evo.isoformat() if self._last_evo else None,
+            # Trigger context for dashboard
+            "trigger_status": {
+                "cooldown_remaining_min": cooldown_remaining,
+                "cooldown_total_min":     cooldown,
+                "loss_current":           losses,
+                "loss_threshold":         threshold,
+                "trades_total":           total,
+                "trades_needed":          max(0, min_t - total),
+                "trades_min":             min_t,
+                "in_cooldown":            cooldown_remaining > 0,
+                "loss_trigger_ready":     total >= min_t and cooldown_remaining == 0,
+                "dd_threshold_pct":       dd_pct,
+                "dd_min_trades":          dd_min,
+                "idle_threshold_min":     idle_min if idle_min > 0 else None,
+            },
         })
 
         # ── Cooldown check (shared by all triggers) ────────────
@@ -174,13 +223,19 @@ class Orchestrator:
             self._last_open_trade = datetime.now().astimezone()
 
         # ── Idle trigger: no open trades for X minutes ──────────
-        idle_minutes = cfg("trigger", "idle_trigger_minutes", default=0)
+        idle_minutes = idle_min
         if idle_minutes > 0 and ft_running:
             idle_elapsed = (
                 datetime.now().astimezone() - self._last_open_trade
             ).total_seconds() / 60
             write_state({"idle_minutes": round(idle_elapsed, 1),
                          "idle_trigger_minutes": idle_minutes})
+            write_state({"trigger_status": {
+                **read_state().get("trigger_status", {}),
+                "idle_elapsed_min":  round(idle_elapsed, 1),
+                "idle_threshold_min": idle_minutes,
+                "idle_trigger_ready": idle_elapsed >= idle_minutes and cooldown_remaining == 0,
+            }})
             if idle_elapsed >= idle_minutes and not _in_cooldown():
                 msg = (f"IDLE TRIGGER: no open trades for "
                        f"{idle_elapsed:.1f} min (threshold={idle_minutes}) "
@@ -191,6 +246,15 @@ class Orchestrator:
                                      "metrics": snap.get("metrics", {})})
                 self._evolve(snap, "idle_no_open_trades")
                 return
+
+        # Write idle=disabled state when not configured
+        if not idle_minutes:
+            write_state({"trigger_status": {
+                **read_state().get("trigger_status", {}),
+                "idle_elapsed_min":   None,
+                "idle_threshold_min": None,
+                "idle_trigger_ready": False,
+            }})
 
         # ── Loss trigger ────────────────────────────────────────
         if total < min_t:
@@ -210,9 +274,48 @@ class Orchestrator:
             self.journal.record(EV_TRIGGERED, self._current_gen,
                                 {"losses": losses, "metrics": snap.get("metrics", {})})
             self._evolve(snap, reason)
+            return
+
+        # ── Profit drawdown trigger ──────────────────────────────
+        if dd_pct > 0 and total >= dd_min:
+            metrics          = snap.get("metrics", {})
+            pnl_drawdown_pct = metrics.get("pnl_drawdown_pct", 0.0)
+            peak_pnl         = metrics.get("peak_pnl",         0.0)
+            current_pnl      = metrics.get("current_pnl",      0.0)
+
+            write_state({"trigger_status": {
+                **read_state().get("trigger_status", {}),
+                "dd_current_pct":  round(pnl_drawdown_pct, 2),
+                "dd_threshold_pct": dd_pct,
+                "dd_peak_pnl":     round(peak_pnl, 4),
+                "dd_current_pnl":  round(current_pnl, 4),
+                "dd_trigger_ready": pnl_drawdown_pct >= dd_pct,
+            }})
+
+            if pnl_drawdown_pct >= dd_pct:
+                reason = f"profit_drawdown_{pnl_drawdown_pct:.1f}pct_from_peak"
+                msg = (f"TRIGGER: profit drawdown {pnl_drawdown_pct:.1f}% from peak "
+                       f"(peak={peak_pnl:.4f} current={current_pnl:.4f} threshold={dd_pct}%) "
+                       f"-> evolving gen {self._current_gen} -> {self._current_gen + 1}")
+                logger.warning(msg); append_log("WARNING", msg)
+                self.journal.record(EV_TRIGGERED, self._current_gen,
+                                    {"reason": reason,
+                                     "pnl_drawdown_pct": pnl_drawdown_pct,
+                                     "peak_pnl": peak_pnl,
+                                     "current_pnl": current_pnl,
+                                     "metrics": metrics})
+                self._evolve(snap, reason)
+                return
+        else:
+            write_state({"trigger_status": {
+                **read_state().get("trigger_status", {}),
+                "dd_current_pct":   None,
+                "dd_threshold_pct": dd_pct,
+                "dd_trigger_ready": False,
+            }})
 
     # ── Strategy error handler (called from ft_monitor.py too) ─
-    def _handle_strategy_error(self, excerpt: str, crashed: bool) -> None:
+    def _handle_strategy_error(self, excerpt: str, crashed: bool = False) -> None:
         """
         Called by FTHealthMonitor when a strategy-caused error is detected.
         Calls the LLM to fix the code and redeploys.
@@ -224,7 +327,7 @@ class Orchestrator:
                 msg = (f"❌ Max FT error fix attempts "
                        f"({self.MAX_FIX_ATTEMPTS}) reached — manual intervention required.")
                 logger.error(msg); append_log("ERROR", msg)
-                write_state({"ft_status": "error_max_retries", "ft_error": excerpt[:300]})
+                write_state({"ft_status": "error_max_retries", "ft_error": excerpt[:300], "ft_error_full": excerpt})
                 return
         else:
             self._fix_attempts   = 0
@@ -233,7 +336,8 @@ class Orchestrator:
         self._fix_attempts += 1
         write_state({
             "status":         "fixing_ft_error",
-            "ft_error":       excerpt[:300],
+            "ft_error":       excerpt[:300],      # short version for pill
+            "ft_error_full":  excerpt,             # full for error panel
             "ft_error_count": self._fix_attempts,
         })
 
@@ -274,7 +378,7 @@ class Orchestrator:
                                 {"reason": "ft_error_fix", "error": excerpt[:200]})
             return
 
-        changelog = f"Auto-fix FT error (attempt {self._fix_attempts}): {excerpt[:80]}"
+        changelog = f"Auto-fix FT error (attempt {self._fix_attempts}): {excerpt[:120]}"
         self.deployer.deploy(new_code, new_gen, perf, "ft_error_fix", changelog)
         self._current_gen    = new_gen
         self._fix_attempts   = 0
@@ -295,9 +399,11 @@ class Orchestrator:
             "attempt":       self._fix_attempts,
         })
         write_state({
-            "status":      "running",
-            "current_gen": new_gen,
-            "ft_error":    None,
+            "status":         "running",
+            "current_gen":    new_gen,
+            "ft_error":       None,
+            "ft_error_full":  None,
+            "ft_error_count": 0,
         })
         append_log("INFO",
             f"✅ FT error fix deployed as gen {new_gen} — monitoring restart…")
@@ -348,6 +454,11 @@ class Orchestrator:
         deployed  = self.deployer.deploy(new_code, new_gen, snap, reason, changelog)
 
         if deployed:
+            # Reset DB so fresh gen starts with clean trade history
+            self.ft.reset_database()
+            # Reset the session timestamp so consecutive_losses only counts
+            # trades closed after the DB wipe — not the now-deleted history
+            write_state({"ft_started_at": local_str()})
             self._current_gen    = new_gen
             self._deploy_at      = local_str()
             self._monitoring     = True
@@ -361,6 +472,7 @@ class Orchestrator:
                 "last_changelog":  changelog,
                 "evolving_to_gen": None,
                 "ft_error":        None,
+                "ft_error_full":   None,
                 "ft_error_count":  0,
             })
             self.journal.record(EV_DEPLOYED, new_gen, {
@@ -379,6 +491,26 @@ class Orchestrator:
         post  = self.harvester.trades_since(self._deploy_at or "")
         count = post.get("count", 0)
         write_state({"monitoring_trades": count, "monitoring_target": n})
+
+
+        # Monitoring timeout: if no trades for too long, exit monitoring and re-enable idle trigger
+        monitor_timeout = cfg("rollback", "monitoring_timeout_minutes", default=60)
+        if self._deploy_at and monitor_timeout > 0:
+            from datetime import datetime
+            try:
+                from .utils import local_now
+                deploy_dt = datetime.fromisoformat(self._deploy_at.replace(" +", "+").replace(" -", "-"))
+                elapsed_min = (local_now() - deploy_dt).total_seconds() / 60
+            except Exception:
+                elapsed_min = 0
+            if elapsed_min >= monitor_timeout and count == 0:
+                append_log("WARNING",
+                    f"Monitoring timeout ({monitor_timeout}min) with 0 trades — "
+                    f"exiting monitoring, resetting idle timer")
+                self._monitoring = False
+                self._last_open_trade = local_now()  # reset idle clock
+                write_state({"monitoring": False, "monitoring_trades": 0, "status": "running"})
+                return
 
         if count < n:
             return
@@ -403,6 +535,7 @@ class Orchestrator:
                                 {"metrics": post.get("metrics", {})})
 
         self._monitoring = False
+        self._last_open_trade = datetime.now().astimezone()  # reset idle clock after monitoring
         write_state({"monitoring": False, "monitoring_trades": 0,
                      "status": "running"})
 
@@ -436,6 +569,33 @@ class Orchestrator:
         elif action == "reload_config":
             load_config(force=True)
             append_log("INFO", "Config reloaded from disk")
+            # Immediately push updated trigger values to state so dashboard
+            # reflects new config without waiting for next tick (up to 60s)
+            _threshold  = cfg("trigger", "consecutive_losses",        default=3)
+            _min_t      = cfg("trigger", "min_trades_before_trigger", default=10)
+            _cooldown   = cfg("trigger", "cooldown_minutes",          default=60)
+            _idle       = cfg("trigger", "idle_trigger_minutes",      default=0)
+            _mon_target   = cfg("rollback", "trades_to_confirm",        default=5)
+            _dd_pct       = cfg("trigger", "profit_drawdown_pct",        default=0)
+            _dd_min       = cfg("trigger", "profit_drawdown_min_trades", default=5)
+            _cd_rem = 0
+            if self._last_evo:
+                elapsed = (datetime.now().astimezone() - self._last_evo).total_seconds() / 60
+                _cd_rem = max(0, round(_cooldown - elapsed, 1))
+            write_state({
+                "trigger_threshold": _threshold,
+                "trigger_status": {
+                    **read_state().get("trigger_status", {}),
+                    "cooldown_remaining_min": _cd_rem,
+                    "cooldown_total_min":     _cooldown,
+                    "loss_threshold":         _threshold,
+                    "trades_min":             _min_t,
+                    "idle_threshold_min":     _idle if _idle > 0 else None,
+                    "loss_trigger_ready":     False,
+                    "dd_threshold_pct":       _dd_pct,
+                },
+                "monitoring_target": _mon_target,
+            })
         elif action == "start_ft":
             write_state({"ft_desired": "running"})
             self.ft.start()

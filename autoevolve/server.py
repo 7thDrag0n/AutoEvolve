@@ -72,6 +72,18 @@ def _register_routes(app: FastAPI, orc, monitor) -> None:
             meta = []
         return JSONResponse(meta)
 
+    @app.get("/api/ft-startup")
+    async def get_ft_startup():
+        """Returns last FT startup stdout/stderr log."""
+        try:
+            startup_log = orc.ft._STARTUP_LOG
+            if startup_log.exists():
+                lines = startup_log.read_text(encoding="utf-8", errors="replace")
+                return JSONResponse({"text": lines})
+        except Exception as e:
+            return JSONResponse({"text": f"Error reading startup log: {e}"})
+        return JSONResponse({"text": "(no startup log yet — start FreqTrade first)"})
+
     @app.get("/api/ft-health")
     async def get_ft_health():
         return JSONResponse(monitor.status())

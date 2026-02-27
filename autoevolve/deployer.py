@@ -102,13 +102,35 @@ class CheckpointManager:
 # FT error classifier
 # ══════════════════════════════════════════════════════════════
 _STRATEGY_ERROR_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
+    # Hard crashes
     r"AttributeError", r"NameError", r"SyntaxError", r"IndentationError",
+    r"ImportError.*strategy", r"Could not load strategy", r"Error loading strategy",
+    r"Strategy.*not found",
+    # Runtime errors in strategy methods
     r"TypeError.*populate_", r"TypeError.*custom_stoploss",
     r"TypeError.*leverage", r"TypeError.*confirm_trade", r"TypeError.*custom_exit",
-    r"ImportError.*strategy", r"KeyError.*dataframe", r"ValueError.*indicator",
-    r"Strategy.*not found", r"Could not load strategy", r"Error loading strategy",
+    r"KeyError.*dataframe", r"ValueError.*indicator",
     r"populate_indicators.*error", r"populate_entry_trend.*error",
     r"populate_exit_trend.*error", r"failed.*strategy", r"strategy.*failed",
+    # FT per-pair analysis failure (strategy code error at candle time)
+    r"Unable to analyze candle",
+    r"Exception.*populate_indicators", r"Exception.*populate_entry",
+    r"Exception.*populate_exit",
+    # Generic unhandled exceptions in strategy context
+    r"Error in strategy", r"Strategy.*exception", r"Unhandled exception.*strategy",
+    # Specific common errors
+    r"unsupported operand type.*populate",
+    r"object is not subscriptable.*dataframe",
+    r"has no attribute.*dataframe",
+    r"ZeroDivisionError.*indicator",
+]]
+
+# Error lines that look like strategy errors but are actually infrastructure
+_STRATEGY_ERROR_WHITELIST = [re.compile(p, re.IGNORECASE) for p in [
+    # "Unable to analyze candle" for exchange/network issues (not code errors)
+    r"Unable to analyze candle.*ConnectionError",
+    r"Unable to analyze candle.*TimeoutError",
+    r"Unable to analyze candle.*NetworkError",
 ]]
 
 _EXTERNAL_ERROR_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
@@ -120,21 +142,133 @@ _EXTERNAL_ERROR_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
 ]]
 
 
+# Regex that matches a FT log timestamp at the START of a line
+_TS_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d+\s+-"
+)
+
+
+def _split_log_blocks(log_lines: list[str]) -> list[list[str]]:
+    """
+    Split raw log lines into logical blocks, where each block is everything
+    between two consecutive top-level timestamp lines.
+    Lines that do NOT start with a timestamp are continuation lines
+    (tracebacks, code snippets, carets) and belong to the preceding block.
+    """
+    blocks: list[list[str]] = []
+    current: list[str] = []
+    for line in log_lines:
+        if _TS_RE.match(line):
+            if current:
+                blocks.append(current)
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        blocks.append(current)
+    return blocks
+
+
+# Any Python exception class at start of a line (bare TypeError, ValueError, etc.)
+_EXCEPTION_LINE_RE = re.compile(
+    r"^\s*(TypeError|ValueError|AttributeError|KeyError|NameError|"
+    r"IndexError|ImportError|RuntimeError|ZeroDivisionError|"
+    r"SyntaxError|IndentationError|AssertionError|Exception|"
+    r"NotImplementedError|OverflowError|RecursionError|"
+    r"Could not load|Error loading|Strategy.*not found)"
+    r"[:\s]",
+    re.IGNORECASE,
+)
+
+# A block is a traceback block if it contains this marker
+_TRACEBACK_MARKER = "Traceback (most recent call last)"
+
+# A block implicates strategy code if any line references the strategy file
+_STRATEGY_FILE_RE = re.compile(
+    r"AutoEvolveStrategy|user_data.strategies|strategy.interface|"
+    r"populate_indicators|populate_entry|populate_exit|"
+    r"custom_stoploss|custom_exit|leverage_amount|confirm_trade",
+    re.IGNORECASE,
+)
+
+
+def _block_is_strategy_error(block_lines: list[str], full_text: str) -> bool:
+    """
+    A block is a strategy error if ANY of:
+    1. Contains a Python Traceback + any exception line
+       (the traceback itself is proof it originated in code)
+    2. Matches one of the explicit _STRATEGY_ERROR_PATTERNS
+    3. Contains "Unable to analyze candle" with an exception description
+       (FT's per-pair wrapper around strategy crashes)
+    AND it does NOT match external/network patterns.
+    """
+    # Rule 1: Traceback + exception line anywhere in block
+    has_traceback = _TRACEBACK_MARKER in full_text
+    has_exception = any(_EXCEPTION_LINE_RE.search(ln) for ln in block_lines)
+    if has_traceback and has_exception:
+        return True
+
+    # Rule 2: Explicit patterns
+    if any(pat.search(full_text) for pat in _STRATEGY_ERROR_PATTERNS):
+        return True
+
+    # Rule 3: FT's "Unable to analyze candle" wrapper —
+    # this line always means a strategy runtime exception
+    if ("Unable to analyze candle" in full_text and
+            any(_EXCEPTION_LINE_RE.search(ln) for ln in block_lines
+                if "Unable to analyze candle" in ln)):
+        return True
+
+    return False
+
+
 def classify_ft_error(log_lines: list[str]) -> tuple[bool, str]:
-    """Returns (is_strategy_error, excerpt)."""
-    for line in log_lines:
-        for pat in _EXTERNAL_ERROR_PATTERNS:
-            if pat.search(line):
-                return False, ""
-    matched = []
-    for line in log_lines:
-        for pat in _STRATEGY_ERROR_PATTERNS:
-            if pat.search(line):
-                matched.append(line.strip())
-                break
-    if matched:
-        return True, "\n".join(matched[:15])
-    return False, ""
+    """
+    Returns (is_strategy_error, full_excerpt).
+    Each 'block' is all lines between two consecutive FT timestamp lines.
+    Captures the complete block so the LLM sees the full traceback context,
+    not just the matched line.
+    Deduplicates blocks that share the same root exception.
+    """
+    if not log_lines:
+        return False, ""
+
+    blocks = _split_log_blocks(log_lines)
+
+    matched_blocks: list[str] = []
+    seen_keys: set[str] = set()
+
+    for block in blocks:
+        full_text = "\n".join(block)
+
+        # Hard skip: external / network errors
+        if any(pat.search(full_text) for pat in _EXTERNAL_ERROR_PATTERNS):
+            continue
+        if any(pat.search(full_text) for pat in _STRATEGY_ERROR_WHITELIST):
+            continue
+
+        if not _block_is_strategy_error(block, full_text):
+            continue
+
+        # Deduplicate: key on the exception line (or first error-pattern match)
+        key_line = next(
+            (ln for ln in block if _EXCEPTION_LINE_RE.search(ln)),
+            block[0]
+        )
+        key = key_line.strip()[:120]
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        matched_blocks.append(full_text)
+        if len(matched_blocks) >= 5:
+            break
+
+    if not matched_blocks:
+        return False, ""
+
+    separator = "\n" + "─" * 60 + "\n"
+    return True, separator.join(matched_blocks)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -298,6 +432,7 @@ class FTManager:
                 "ft_status":      "starting",
                 "ft_running":     False,
             "ft_desired":     "running",
+            "ft_started_at":  local_str(),
                 "ft_error":       None,
                 "ft_error_count": 0,
             })
@@ -361,7 +496,7 @@ class FTManager:
                     ["pkill", "-f", "freqtrade trade"],
                     capture_output=True,
                 )
-            write_state({"ft_pid": None, "ft_status": "stopped", "ft_running": False, "ft_desired": "stopped"})
+            write_state({"ft_pid": None, "ft_status": "stopped", "ft_running": False})
             append_log("INFO", "FreqTrade stopped")
             return True
         except Exception as e:
@@ -400,31 +535,14 @@ class FTManager:
         if pid:
             if self._pid_alive(int(pid)):
                 return True
-            write_state({"ft_pid": None, "ft_status": "stopped", "ft_running": False, "ft_desired": "stopped"})
+            write_state({"ft_pid": None, "ft_status": "stopped", "ft_running": False})
             return False
 
-        # No stored PID — scan for any freqtrade process
-        try:
-            if platform.system() == "Windows":
-                r = subprocess.run(
-                    ["wmic", "process", "where",
-                     "name='python.exe' or name='freqtrade.exe'",
-                     "get", "commandline"],
-                    capture_output=True, text=True, timeout=8,
-                )
-                for line in r.stdout.splitlines():
-                    ll = line.lower()
-                    if "freqtrade" in ll and "trade" in ll:
-                        return True
-                return False
-            else:
-                r = subprocess.run(
-                    ["pgrep", "-f", "freqtrade trade"],
-                    capture_output=True, text=True,
-                )
-                return bool(r.stdout.strip())
-        except Exception:
-            return False
+        # No stored PID — on restart we cannot reliably find FT without a PID.
+        # The wmic scan is too broad and matches AutoEvolve itself when it
+        # runs from inside the freqtrade directory. Without a PID we must
+        # assume FT is NOT running and let the desired-state logic start it.
+        return False
 
     # ── REST helpers (hot-reload only) ────────────────────────
     def _api_auth(self) -> tuple[bool, str]:
@@ -503,6 +621,57 @@ class FTManager:
 # ══════════════════════════════════════════════════════════════
 # FT Health Monitor  (background thread)
 # ══════════════════════════════════════════════════════════════
+    def reset_database(self) -> bool:
+        """Wipe the FT trade DB after a strategy deploy.
+        SQL first, file deletion fallback.
+        Disable with freqtrade.reset_db_after_evolve: false in config.yaml."""
+        if not cfg("freqtrade", "reset_db_after_evolve", default=True):
+            return False
+        raw = cfg("freqtrade", "db_path", default="")
+        if not raw:
+            append_log("WARNING", "DB reset skipped — db_path not configured")
+            return False
+        db_path = Path(raw).expanduser().resolve()
+        if not db_path.exists():
+            append_log("INFO", "DB reset: file not found, nothing to wipe")
+            return True
+        try:
+            import sqlite3 as _sq
+            conn = _sq.connect(str(db_path), timeout=10)
+            conn.execute("PRAGMA foreign_keys = OFF")
+            conn.execute("BEGIN TRANSACTION")
+            for tbl in ("orders", "trades", "pairlocks",
+                        "pairlocks_history", "trade_custom_data"):
+                try:
+                    conn.execute(f"DELETE FROM {tbl}")
+                except Exception:
+                    pass
+            try:
+                conn.execute(
+                    "DELETE FROM sqlite_sequence WHERE name IN "
+                    "('orders','trades','pairlocks','pairlocks_history','trade_custom_data')"
+                )
+            except Exception:
+                pass
+            conn.execute("COMMIT")
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("VACUUM")
+            conn.close()
+            append_log("INFO", f"DB wiped via SQL: {db_path.name}")
+            return True
+        except Exception as e:
+            append_log("WARNING", f"SQL wipe failed ({e}) — deleting DB files")
+        for suffix in ("", "-wal", "-shm"):
+            p = Path(str(db_path) + suffix)
+            if p.exists():
+                try:
+                    p.unlink()
+                    append_log("INFO", f"Deleted DB file: {p.name}")
+                except Exception as e2:
+                    append_log("WARNING", f"Could not delete {p.name}: {e2}")
+        return True
+
+
 class FTHealthMonitor:
     """
     Runs in a daemon thread.  Every `interval` seconds:
@@ -560,6 +729,7 @@ class FTHealthMonitor:
         while not self._stop_evt.wait(timeout=self.interval):
             try:
                 self._check()
+                write_state({"orch_alive": local_str()})  # backup heartbeat during LLM calls
             except Exception as e:
                 logger.debug(f"FTHealthMonitor tick error: {e}")
 
@@ -598,6 +768,35 @@ class FTHealthMonitor:
                 self._last_ping    = now
                 self._last_error   = ""
             write_state({"ft_api_ok": True, "ft_last_ping": now})
+
+            # Even with API healthy, scan log for strategy runtime errors
+            # (FT stays running with API up but strategy can fail per-pair)
+            with self._lock:
+                self._total_checks_since_scan = getattr(self, "_total_checks_since_scan", 0) + 1
+            if self._total_checks_since_scan >= 3:  # every ~30s (3 × 10s interval)
+                self._total_checks_since_scan = 0
+                is_strategy_err, excerpt = self._ft.check_for_strategy_error()
+                if is_strategy_err:
+                    # Only trigger if this is a NEW error (not already being fixed)
+                    state = read_state()
+                    already_fixing = state.get("status") == "fixing_ft_error"
+                    if not already_fixing:
+                        append_log("WARNING",
+                            f"FT health: strategy runtime error detected in log "
+                            f"(API still OK) — requesting auto-fix")
+                        write_state({"ft_error_full":  excerpt,
+                                     "ft_error":       excerpt[:300]})
+                        if self.on_strategy_error:
+                            try:
+                                self.on_strategy_error(excerpt)
+                            except Exception as e:
+                                logger.error(f"on_strategy_error callback error: {e}")
+                else:
+                    # Log clean — clear any stale error panel if not already fixed
+                    state = read_state()
+                    if state.get("ft_error_full") and state.get("status") != "fixing_ft_error":
+                        write_state({"ft_error": None, "ft_error_full": None,
+                                     "ft_error_count": 0})
             return
 
         # Auth failed while FT should be running

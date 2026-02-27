@@ -301,7 +301,22 @@ class LLMImprover:
         )
 
         prompt_chars = len(code_system) + len(code_user)
-        append_log("INFO", f"Code prompt chars={prompt_chars}")
+        # Token budget: 1 token ≈ 4 chars. Trim code further if over budget.
+        max_tokens_budget = cfg("llm", "max_prompt_tokens", default=50000)
+        budget_chars = max_tokens_budget * 4
+        while len(code_system) + len(code_user) > budget_chars and len(trimmed_code) > 1000:
+            # Shrink code first (most expensive element)
+            trimmed_code = _trim_code(trimmed_code, max_chars=max(1000, len(trimmed_code) - 1000))
+            code_user = _CODE_USER.format(
+                chosen_concept      = analysis.get("chosen_concept", ""),
+                implementation_plan = analysis.get("implementation_plan", ""),
+                expected_impact     = analysis.get("expected_impact", ""),
+                risk                = analysis.get("risk", ""),
+                code                = trimmed_code,
+                perf                = trimmed_perf,
+            )
+        final_chars = len(code_system) + len(code_user)
+        append_log("INFO", f"Code prompt chars={final_chars} (~{final_chars//4} tokens)")
 
         max_attempts = 3
         for attempt in range(max_attempts):
@@ -366,11 +381,11 @@ class LLMImprover:
     def _call(self, provider: str, system: str, user: str) -> str:
         if provider == "anthropic":
             return self._anthropic(system, user)
-        if provider in ("openai", "openrouter", "chutes"):
-            return self._openai_compat(provider, system, user)
         if provider == "ollama":
             return self._ollama(system, user)
-        raise ValueError(f"Unknown LLM provider: {provider}")
+        # Any other name (openai, openrouter, chutes, or any custom provider)
+        # is treated as OpenAI-compatible REST — requires base_url + api_key in config.
+        return self._openai_compat(provider, system, user)
 
     def _anthropic(self, system: str, user: str) -> str:
         try:
