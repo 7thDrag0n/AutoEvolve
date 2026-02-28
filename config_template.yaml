@@ -193,6 +193,7 @@ optimization:
 #       api_key:  "sk-..."
 #       max_tokens:  16384
 #       temperature: 0.6
+#       # OpenRouter-only routing params (ignored by other providers):
 #       allow_fallbacks:       true
 #       max_price_prompt:      0.10
 #       max_price_completion:  0.40
@@ -222,10 +223,6 @@ llm:
     api_key_env: "OPENAI_API_KEY"
     max_tokens:  16384
     temperature: 0.6             # 0.0 = deterministic, 1.0 = creative. 0.6 recommended.
-    allow_fallbacks:       true  # allow provider to use fallback models if primary unavailable
-    max_price_prompt:      0.10  # max USD per 1M prompt tokens (filters model selection)
-    max_price_completion:  0.40  # max USD per 1M completion tokens
-    sort:                  "price"  # price | throughput | latency
 
   # ── OpenRouter ───────────────────────────────────────────────
   # Access hundreds of models through one API. See https://openrouter.ai/models
@@ -251,10 +248,6 @@ llm:
     base_url:    "https://llm.chutes.ai/v1"
     max_tokens:  16384
     temperature: 0.6
-    allow_fallbacks:       true
-    max_price_prompt:      0.10
-    max_price_completion:  0.40
-    sort:                  "price"
 
   # ── Ollama (local) ───────────────────────────────────────────
   # Run models locally — no API cost, but requires a capable GPU.
@@ -264,11 +257,6 @@ llm:
     base_url: "http://localhost:11434"
     max_tokens: 16384
     temperature: 0.6
-    # Routing/pricing params below are ignored by Ollama (local model, no routing)
-    allow_fallbacks:       false
-    max_price_prompt:      0.10
-    max_price_completion:  0.40
-    sort:                  "price"
 
 
 # ── Dashboard ─────────────────────────────────────────────────
