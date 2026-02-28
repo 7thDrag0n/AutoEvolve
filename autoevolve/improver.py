@@ -435,10 +435,9 @@ class LLMImprover:
             ],
         }
 
-        # Provider routing block — OpenRouter uses it fully; other OpenAI-compat
-        # endpoints typically ignore unknown top-level keys so it's safe to send.
-        # Ollama is local and doesn't need routing, so skip it there.
-        if provider != "ollama":
+        # Provider routing block — OpenRouter-specific syntax.
+        # Other providers (chutes, openai, etc.) reject unknown top-level keys.
+        if provider == "openrouter":
             allow_fallbacks = c.get("allow_fallbacks", True)
             price_prompt    = c.get("max_price_prompt",     0.10)
             price_compl     = c.get("max_price_completion", 0.40)
