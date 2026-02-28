@@ -363,11 +363,14 @@ class Orchestrator:
             ),
         }
 
-        new_gen  = self._current_gen + 1
+        # Fix attempts overwrite the SAME broken generation — gen number only
+        # advances once when the evolution first deployed. Fixes are patches on
+        # that gen, not new generations, so the counter doesn't burn numbers.
+        broken_gen = self._current_gen   # the gen that has the error
         new_code = self.improver.improve(
             code    = code,
             perf    = perf,
-            gen     = new_gen,
+            gen     = broken_gen,        # same gen, just fixing it
             reason  = f"ft_error_fix_attempt_{self._fix_attempts}",
             history = self.journal.history_for_llm(),
         )
@@ -378,9 +381,12 @@ class Orchestrator:
                                 {"reason": "ft_error_fix", "error": excerpt[:200]})
             return
 
-        changelog = f"Auto-fix FT error (attempt {self._fix_attempts}): {excerpt[:120]}"
-        self.deployer.deploy(new_code, new_gen, perf, "ft_error_fix", changelog)
-        self._current_gen    = new_gen
+        # Strip backslashes from excerpt used in changelog — Windows paths
+        # (e.g. D:/Python/freqtrade) in re.sub replacement strings cause re.error
+        safe_excerpt = excerpt[:120].replace("\\", "/").replace("\r", "").replace("\n", " ")
+        changelog = f"Auto-fix gen {broken_gen} (attempt {self._fix_attempts}): {safe_excerpt}"
+        self.deployer.deploy(new_code, broken_gen, perf, "ft_error_fix", changelog)
+        # _current_gen stays the same — we fixed the broken gen, not created a new one
         self._fix_attempts   = 0
         self._last_error_sig = ""
 
@@ -392,21 +398,33 @@ class Orchestrator:
             if not ok:
                 self.ft.restart()
 
-        self.journal.record(EV_FT_ERR_FIXED, new_gen, {
+        self.journal.record(EV_FT_ERR_FIXED, broken_gen, {
             "metrics":       perf.get("metrics", {}),
             "changelog":     changelog,
             "error_excerpt": excerpt[:200],
             "attempt":       self._fix_attempts,
         })
+        # Advance the log scan offset so the next health check won't
+        # re-detect the error we just fixed from the same log file
+        new_log_offset = 0
+        try:
+            from .utils import ft_log_path as _flp
+            lf = _flp()
+            if lf.exists():
+                new_log_offset = lf.stat().st_size
+        except Exception:
+            pass
+
         write_state({
-            "status":         "running",
-            "current_gen":    new_gen,
-            "ft_error":       None,
-            "ft_error_full":  None,
-            "ft_error_count": 0,
+            "status":            "running",
+            "current_gen":       broken_gen,
+            "ft_error":          None,
+            "ft_error_full":     None,
+            "ft_error_count":    0,
+            "ft_log_scan_from":  new_log_offset,
         })
         append_log("INFO",
-            f"✅ FT error fix deployed as gen {new_gen} — monitoring restart…")
+            f"✅ FT error fix deployed gen {broken_gen} — resuming…")
 
     # ── Evolution ──────────────────────────────────────────────
     def _evolve(self, snap: dict, reason: str) -> None:

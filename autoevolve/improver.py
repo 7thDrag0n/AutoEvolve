@@ -323,7 +323,7 @@ class LLMImprover:
             try:
                 raw = self._call(provider, code_system, code_user)
                 if raw:
-                    cleaned = self._strip_fences(raw)
+                    cleaned = self._sanitize(self._strip_fences(raw))
                     if self._validate(cleaned, sname):
                         append_log("INFO",
                             f"LLM success gen={gen} attempt={attempt+1} "
@@ -485,6 +485,48 @@ class LLMImprover:
         raw = re.sub(r"```\s*$", "", raw, flags=re.MULTILINE)
         return raw.strip()
 
+    def _sanitize(self, code: str) -> str:
+        """
+        Fix common LLM mistakes before deploying:
+        - CRLF line endings -> LF
+        - Windows paths in string literals (e.g. D:\\Python\\freqtrade) produce
+          SyntaxWarning or re.error. Strategy code never needs Windows paths,
+          so replace every backslash inside string literals with a forward slash.
+        """
+        import re as _re
+
+        # Normalize line endings
+        code = code.replace('\r\n', '\n').replace('\r', '\n')
+
+        # Replace Unicode whitespace look-alikes with plain ASCII space/nothing.
+        # LLMs often emit NBSP, NNBSP, thin-space etc. in comments/strings.
+        for _uch, _repl in [
+            ('\u00ad', ''),    # SOFT HYPHEN — invisible, just remove
+            ('\u00a0', ' '),   # NO-BREAK SPACE
+            ('\u202f', ' '),   # NARROW NO-BREAK SPACE (NNBSP)
+            ('\u2009', ' '),   # THIN SPACE
+            ('\u2008', ' '),   # PUNCTUATION SPACE
+            ('\u2007', ' '),   # FIGURE SPACE
+            ('\u2006', ' '),   # SIX-PER-EM SPACE
+            ('\u2005', ' '),   # FOUR-PER-EM SPACE
+            ('\u2004', ' '),   # THREE-PER-EM SPACE
+            ('\u2003', ' '),   # EM SPACE
+            ('\u2002', ' '),   # EN SPACE
+            ('\u3000', ' '),   # IDEOGRAPHIC SPACE
+            ('\u205f', ' '),   # MEDIUM MATHEMATICAL SPACE
+        ]:
+            code = code.replace(_uch, _repl)
+
+        def _slashes_to_fwd(m):
+            # Replace all backslashes inside the matched string literal
+            return m.group(0).replace('\\', '/')
+
+        # Double-quoted single-line literals
+        code = _re.sub(r'"[^"\n]*"', _slashes_to_fwd, code)
+        # Single-quoted single-line literals
+        code = _re.sub(r"'[^'\n]*'", _slashes_to_fwd, code)
+        return code
+
     def _validate(self, code: str, sname: str) -> bool:
         required = [
             f"class {sname}",
@@ -498,9 +540,12 @@ class LLMImprover:
             if check not in code:
                 logger.warning(f"LLM output missing: {check}")
                 return False
+        import warnings as _warnings
         try:
-            compile(code, "<llm_output>", "exec")
-        except SyntaxError as e:
-            logger.warning(f"LLM syntax error: {e}")
+            with _warnings.catch_warnings():
+                _warnings.simplefilter("error")   # treat SyntaxWarning as error
+                compile(code, "<llm_output>", "exec")
+        except (SyntaxError, Exception) as e:
+            logger.warning(f"LLM syntax/compile error: {e}")
             return False
         return True

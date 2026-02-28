@@ -427,14 +427,26 @@ class FTManager:
                         cwd=ft_cwd,
                     )
 
+            # Record the log file size at FT start — the health monitor
+            # will only scan lines written AFTER this offset, so old error
+            # entries from previous sessions never trigger false auto-fixes.
+            log_offset = 0
+            try:
+                lf = ft_log_path()
+                if lf.exists():
+                    log_offset = lf.stat().st_size
+            except Exception:
+                pass
+
             write_state({
-                "ft_pid":         proc.pid,
-                "ft_status":      "starting",
-                "ft_running":     False,
-            "ft_desired":     "running",
-            "ft_started_at":  local_str(),
-                "ft_error":       None,
-                "ft_error_count": 0,
+                "ft_pid":            proc.pid,
+                "ft_status":         "starting",
+                "ft_running":        False,
+                "ft_desired":        "running",
+                "ft_started_at":     local_str(),
+                "ft_log_scan_from":  log_offset,
+                "ft_error":          None,
+                "ft_error_count":    0,
             })
             append_log("INFO",
                 f"FreqTrade launched — PID {proc.pid}  "
@@ -595,11 +607,19 @@ class FTManager:
         if not p.exists():
             return []
         try:
+            # Only read log content written after FT was last started.
+            # This prevents old error lines from previous sessions triggering
+            # false auto-fixes when the user manually fixes and restarts.
+            scan_from = read_state().get("ft_log_scan_from", 0) or 0
             with open(p, "rb") as f:
                 f.seek(0, 2)
-                size  = f.tell()
-                block = min(size, 65536)
-                f.seek(max(0, size - block))
+                size = f.tell()
+                # If log was rotated/truncated, scan_from > size — read all
+                if scan_from > size:
+                    scan_from = 0
+                # Read at most 65536 bytes from scan_from onwards
+                start = max(scan_from, size - 65536)
+                f.seek(start)
                 raw = f.read().decode("utf-8", errors="replace")
             return raw.splitlines()[-n:]
         except Exception as e:
@@ -912,6 +932,9 @@ class Deployer:
         )
         pat = r"# GENERATION_METADATA = \{.*?# \}"
         if re.search(pat, code, re.DOTALL):
-            return re.sub(pat, block, code, flags=re.DOTALL)
+            # Use lambda so `block` is never interpreted as a regex replacement
+            # string (backslashes in Windows paths like D:\Python would cause
+            # re.error: bad escape otherwise)
+            return re.sub(pat, lambda _: block, code, flags=re.DOTALL)
         lines = code.split("\n")
         return lines[0] + "\n" + block + "\n" + "\n".join(lines[1:])
