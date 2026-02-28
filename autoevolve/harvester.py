@@ -173,7 +173,15 @@ class Harvester:
 
         p = Path(raw).expanduser().resolve()
         if not p.exists():
-            # Try to auto-detect nearby FT databases
+            # DB not yet created (fresh FT instance) — silently return None.
+            # Only warn+auto-detect if config is wrong (path set but wrong location).
+            # We distinguish: if raw path was explicitly set but missing, try to help.
+            # If no path was configured at all, just wait silently.
+            if not raw:
+                return None   # no db_path configured, nothing to do yet
+
+            # Path was configured but doesn't exist yet — could be fresh FT startup.
+            # Auto-detect quietly and only warn once per unique path.
             from .utils import BASE_DIR
             candidates = sorted(
                 [c for c in (list(BASE_DIR.rglob("*.sqlite")) +
@@ -184,15 +192,15 @@ class Harvester:
             )
             if candidates:
                 p = candidates[0]
-                append_log("WARNING",
-                    f"harvester: db_path '{raw}' not found — "
-                    f"auto-detected: {p}. "
-                    f"Set freqtrade.db_path in config.yaml to fix.")
+                # Only log if the auto-detected path differs from configured —
+                # i.e. the config is actually wrong, not just "DB not yet created"
+                if p != Path(raw).expanduser().resolve():
+                    append_log("WARNING",
+                        f"harvester: db_path '{raw}' not found — "
+                        f"auto-detected: {p}. "
+                        f"Set freqtrade.db_path in config.yaml to fix.")
             else:
-                append_log("WARNING",
-                    f"harvester: DB not found at {p}. "
-                    f"Check freqtrade.db_path in config.yaml — "
-                    f"should match 'Using DB:' line in FT startup log.")
+                # DB simply doesn't exist yet (FT not started or fresh instance)
                 return None
 
         try:
