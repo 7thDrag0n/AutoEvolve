@@ -413,8 +413,9 @@ class LLMImprover:
         key      = c.get("api_key", "") or os.environ.get(c.get("api_key_env", ""), "")
         base_url = c.get("base_url", "https://api.openai.com/v1").rstrip("/")
         model    = c.get("model", "gpt-4o")
-        max_tok  = c.get("max_tokens", 8192)
+        max_tok  = c.get("max_tokens", 16384)
         timeout  = cfg("llm", "timeout", default=600)
+        temp     = c.get("temperature", 0.6)
 
         headers = {
             "Authorization": f"Bearer {key}",
@@ -425,13 +426,31 @@ class LLMImprover:
             headers["X-Title"]      = c.get("site_name", "AutoEvolve")
 
         payload = {
-            "model":      model,
-            "max_tokens": max_tok,
-            "messages":   [
+            "model":       model,
+            "max_tokens":  max_tok,
+            "temperature": temp,
+            "messages":    [
                 {"role": "system", "content": system},
                 {"role": "user",   "content": user},
             ],
         }
+
+        # Provider routing block — OpenRouter uses it fully; other OpenAI-compat
+        # endpoints typically ignore unknown top-level keys so it's safe to send.
+        # Ollama is local and doesn't need routing, so skip it there.
+        if provider != "ollama":
+            allow_fallbacks = c.get("allow_fallbacks", True)
+            price_prompt    = c.get("max_price_prompt",     0.10)
+            price_compl     = c.get("max_price_completion", 0.40)
+            sort_by         = c.get("sort", "price")
+            payload["provider"] = {
+                "allow_fallbacks": allow_fallbacks,
+                "max_price": {
+                    "prompt":     price_prompt,
+                    "completion": price_compl,
+                },
+                "sort": sort_by,
+            }
 
         key_hint = ("*" + key[-6:]) if len(key) > 6 else "(empty)"
         append_log("INFO",
@@ -546,6 +565,15 @@ class LLMImprover:
                 _warnings.simplefilter("error")   # treat SyntaxWarning as error
                 compile(code, "<llm_output>", "exec")
         except (SyntaxError, Exception) as e:
-            logger.warning(f"LLM syntax/compile error: {e}")
+            # Check if this looks like truncation (syntax error near end of file)
+            total_lines = code.count("\n")
+            err_line = getattr(e, "lineno", 0) or 0
+            if err_line and err_line >= total_lines - 5:
+                logger.warning(
+                    f"LLM output appears TRUNCATED at line {err_line}/{total_lines} "
+                    f"— increase max_tokens in config.yaml (currently hitting token limit)"
+                )
+            else:
+                logger.warning(f"LLM syntax/compile error: {e}")
             return False
         return True
