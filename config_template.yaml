@@ -1,143 +1,284 @@
 # =============================================================
-# AutoEvolve — Master Configuration
-# Hot-reloadable: changes take effect on next poll cycle.
-# Use "Reload Config" in the dashboard or send ctrl command.
+# AutoEvolve — Configuration Template
+# Copy this file to config.yaml and fill in the required fields.
+# Fields marked !! REQUIRED !! must be set before starting.
+# Hot-reloadable: most changes take effect on the next poll cycle
+# without restarting AutoEvolve. Use "Reload Config" in dashboard.
 # =============================================================
+
 
 # ── AutoEvolve environment ────────────────────────────────────
 autoevolve:
-  venv: "./.venv312"            # venv used to run THIS system (main.py)
-                              # Leave blank if running directly in system Python
+  venv: "./.venv"           # Path to AutoEvolve's own Python venv.
+                             # Leave blank to use the system Python directly.
+
 
 # ── FreqTrade ─────────────────────────────────────────────────
 freqtrade:
-  root_dir: "D:/Python/freqtrade"   # optional override
-  venv:           "D:/Python/freqtrade/.venv312"       # FreqTrade's own venv
-                                             # All FT commands (start/stop/reload) use this
-  config_file:    "./config.json"  # FT config kept HERE in autoevolve folder
-  strategies_dir: "D:/Python/freqtrade/user_data/strategies/AutoEvolveStrategy"
-  db_path:        "D:/Python/freqtrade/user_data/strategies/AutoEvolveStrategy/AutoEvolveStrategy.dryrun.sqlite"
-  strategy_name:  "AutoEvolveStrategy"
-  initial_strategy_file: "D:/Python/freqtrade/user_data/strategies/AutoEvolveStrategy/AutoEvolveStrategy.py"  # optional: path to a .py file to use as gen 1 seed
-  reset_db_after_evolve: false  # wipe trade DB after each successful evolution (recommended)
 
-  # FreqTrade REST API (for hot-reload without restart)
+  # !! REQUIRED !! Path to FreqTrade's own virtual environment.
+  # AutoEvolve uses this venv to start/stop/reload FreqTrade.
+  venv: "~/freqtrade/.venv"
+
+  # !! REQUIRED !! FreqTrade config file to use when starting FT.
+  # Keep a copy of your freqtrade config here in the autoevolve folder.
+  # Windows example: "D:/Python/freqtrade/user_data/strategies/AutoEvolveStrategy/config.json"
+  config_file: "./freqtrade_config.json"
+
+  # !! REQUIRED !! Directory where FT loads strategies from.
+  # AutoEvolve writes the evolved strategy file here.
+  # Windows example: "D:/Python/freqtrade/user_data/strategies/AutoEvolveStrategy"
+  strategies_dir: "~/freqtrade/user_data/strategies/AutoEvolveStrategy"
+
+  # !! REQUIRED !! Path to the FreqTrade SQLite trade database.
+  # Used by AutoEvolve to read trade history and compute metrics.
+  # Windows example: "D:/Python/freqtrade/user_data/tradesv3.sqlite"
+  db_path: "~/freqtrade/user_data/tradesv3.sqlite"
+
+  # Name of the strategy class AutoEvolve generates and deploys.
+  # Must match the class name inside the generated .py file.
+  strategy_name: "AutoEvolveStrategy"
+
+  # Optional: path to a .py strategy file to use as Generation 1 seed.
+  # AutoEvolve will rename the class to strategy_name automatically.
+  # Leave blank to use the built-in 15-minute baseline template.
+  # Windows example: "D:/my_strategies/MyBaseStrategy.py"
+  initial_strategy_file: ""
+
+  # Whether to wipe the FreqTrade trade database after each successful evolution.
+  # Recommended: true — prevents old trade history from polluting metrics.
+  # Set false if you want to preserve trade history across generations.
+  reset_db_after_evolve: true
+
+  # FreqTrade REST API settings (used for hot-reload without restarting FT).
+  # !! REQUIRED !! password must match api_server.password in freqtrade_config.json
   api:
     host:     "127.0.0.1"
-    port:     43000
-    username: ""
-    password: ""     # must match freqtrade_config.json api_server.password
+    port:     8080
+    username: "freqtrade"
+    password: "CHANGE_ME"
 
-  # Extra flags appended when starting FreqTrade
-  # e.g. "--dry-run" or "--dry-run --logfile /tmp/ft.log"
+  # Extra command-line flags passed to FreqTrade on startup.
+  # Use "--dry-run" for paper trading (strongly recommended to start with).
+  # Remove "--dry-run" only when ready to trade with real funds.
   extra_flags: "--dry-run"
 
-  # Path where FreqTrade writes its own log (tailed for strategy error detection)
-  logfile: "D:/Python/freqtrade/user_data/logs/AutoEvolveStrategy.dryrun.txt"
+  # Path where FreqTrade writes its log file.
+  # AutoEvolve tails this file to detect strategy runtime errors.
+  # Must match the --logfile flag FreqTrade is started with.
+  logfile: "./logs/freqtrade.log"
 
-  # Max LLM fix attempts for the same strategy error before giving up
+  # How many times AutoEvolve will attempt to auto-fix the same strategy
+  # error before giving up and requiring manual intervention.
   ft_error_max_fix_attempts: 5
 
-# ── Evolution exploration ────────────────────────────────────────
+  # Optional: override the directory FreqTrade starts in (its "root dir").
+  # AutoEvolve auto-detects this by walking up from strategies_dir.
+  # Set explicitly if auto-detection fails.
+  # root_dir: "D:/Python/freqtrade"
+
+
+# ── Evolution ─────────────────────────────────────────────────
 evolution:
-  exploration_mode: "adaptive"   # conservative=fix basics | adaptive=auto | aggressive=always try new
+
+  # How aggressively the LLM experiments with new ideas.
+  # conservative  — focus on fixing problems, minimal structural changes
+  # adaptive      — auto-select based on recent performance (recommended)
+  # aggressive    — always try new concepts regardless of performance
+  exploration_mode: "adaptive"
+
+  # Trading concepts the LLM rotates through across generations.
+  # Each concept is tried in sequence; remove any you don't want.
+  # The LLM decides how to apply each concept based on current strategy state.
   concepts_to_try:
     - "smart_money_concepts"        # Order blocks, FVG, liquidity sweeps, BOS/CHoCH
     - "support_resistance_pivots"   # Swing highs/lows, volume nodes, key S/R levels
     - "multi_timeframe_filter"      # Only trade in direction of 1h/4h trend
     - "volume_analysis"             # Volume delta, OBV, VWAP, volume profile
     - "dynamic_stoploss_atr"        # ATR-scaled stops, trail after partial profit
-    - "dynamic_leverage"            # Scale leverage with volatility (low ATR=high lev)
+    - "dynamic_leverage"            # Scale leverage with volatility (low ATR = high lev)
     - "entry_confluence"            # Require 2+ independent signals before entry
-    - "partial_exit_scaling"        # Scale out in tranches (50% at 1R, trail rest)
-    - "regime_filter"               # Detect trending vs ranging, switch strategy mode
+    - "partial_exit_scaling"        # Scale out in tranches (50% at 1R, trail the rest)
+    - "regime_filter"               # Detect trending vs ranging, adapt strategy mode
     - "candlestick_patterns"        # Engulfing, pin bar, inside bar, hammer at S/R
 
-# ── Evolution triggers ────────────────────────────────────────
+
+# ── Evolution Triggers ────────────────────────────────────────
+# Conditions that cause AutoEvolve to start a new evolution cycle.
+# The cooldown and trade gate apply to ALL triggers.
 trigger:
-  consecutive_losses:        3     # evolve after N consecutive losing trades
-  min_trades_before_trigger: 10    # don't trigger until at least N trades closed
-  cooldown_minutes:          60    # minimum minutes between evolutions
-  idle_trigger_minutes:      20     # evolve if no open trades for this many minutes (0 = disabled)
-  # Profit drawdown trigger — fires when cumulative PnL drops X% from its
-  # session peak, even if win rate still looks healthy.
-  # Example: peak was +10 USDT, drawdown_pct=20 → triggers if PnL falls to +8 USDT.
+
+  # Minimum number of CLOSED trades before any trigger can fire.
+  # Too low = LLM gets misleading stats. Recommended: 15–30.
+  min_trades_before_trigger: 10
+
+  # Minimum time between evolutions regardless of trigger conditions.
+  # Prevents rapid-fire evolution on volatile markets.
+  cooldown_minutes: 60
+
+  # --- Consecutive loss trigger ---
+  # Evolve after N losing trades in a row (counted from most recent backwards).
+  consecutive_losses: 3
+
+  # --- Idle trigger ---
+  # Evolve if no new trade has been OPENED in this many minutes.
+  # Catches strategies that become too restrictive and stop entering positions.
+  # Counts time since last trade entry, even if other trades are still open.
   # Set to 0 to disable.
-  profit_drawdown_pct:         20    # trigger if PnL drops X% from its peak (0 = disabled)
-  profit_drawdown_min_trades:  5     # minimum closed trades before this trigger activates
-  
+  idle_trigger_minutes: 20
+
+  # --- Profit drawdown trigger ---
+  # Evolve when cumulative PnL drops X% below its all-time peak.
+  # Catches gradual equity erosion even when win rate looks acceptable.
+  # Example: peak PnL was +10 USDT, drawdown_pct=20 → triggers if PnL falls to +8 USDT.
+  # Set to 0 to disable.
+  profit_drawdown_pct: 20
+
+  # Minimum closed trades required before the drawdown trigger activates.
+  # Prevents false triggers from early PnL volatility.
+  profit_drawdown_min_trades: 5
+
+
 # ── Rollback ──────────────────────────────────────────────────
+# After each evolution, AutoEvolve monitors the next N trades.
+# If performance drops below thresholds, the previous generation is restored.
 rollback:
-  evaluate_after_n_trades:    30     # trades to observe post-deploy before deciding
-  rollback_if_winrate_below:  0.35  # rollback if win rate drops below 35%
-  rollback_if_drawdown_above: 0.15  # rollback if drawdown exceeds 15%
-  monitoring_timeout_minutes: 10   # exit monitoring if no trades for this long
+
+  # Number of trades to observe after deploying a new generation.
+  # Higher = more evidence before deciding. Lower = faster reaction.
+  evaluate_after_n_trades: 30
+
+  # Roll back if win rate during the monitoring window falls below this.
+  rollback_if_winrate_below: 0.35
+
+  # Roll back if drawdown during the monitoring window exceeds this.
+  rollback_if_drawdown_above: 0.15
+
+  # Exit the monitoring window if no trades happen within this many minutes.
+  # Prevents the system from being stuck in monitoring forever on quiet markets.
+  monitoring_timeout_minutes: 60
+
 
 # ── Checkpoints ───────────────────────────────────────────────
 checkpoints:
-  directory:       "./checkpoints"
-  max_generations: 100               # keep last N, prune older ones
+  # Directory where strategy generations are saved.
+  directory: "./checkpoints"
 
-# ── Optimization targets (fed to LLM as context) ──────────────
+  # Maximum number of generations to keep on disk. Oldest are pruned automatically.
+  max_generations: 10
+
+
+# ── Optimization Targets ──────────────────────────────────────
+# These targets are passed to the LLM as context — it tries to improve
+# the strategy towards these goals. They do NOT trigger evolution directly.
 optimization:
   targets:
-    profit_factor: 1.8
-    sharpe_ratio:  1.5
-    win_rate:      0.52
-    max_drawdown:  0.10
+    profit_factor: 1.8    # target PnL / loss ratio
+    sharpe_ratio:  1.5    # target risk-adjusted return
+    win_rate:      0.52   # target percentage of winning trades
+    max_drawdown:  0.10   # target maximum portfolio drawdown (10%)
+
 
 # ── LLM Provider ──────────────────────────────────────────────
-# provider options: anthropic | openai | openrouter | chutes | ollama
+# Set provider to the name of the block you want to use below.
+# anthropic and ollama are handled natively.
+# All other names are treated as OpenAI-compatible REST endpoints.
+#
+# Custom provider example:
+#   llm:
+#     provider: "myprovider"
+#     myprovider:
+#       model:    "my-model-name"
+#       base_url: "https://api.myprovider.com/v1"
+#       api_key:  "sk-..."
+#       max_tokens:  16384
+#       temperature: 0.6
+#       allow_fallbacks:       true
+#       max_price_prompt:      0.10
+#       max_price_completion:  0.40
+#       sort:                  "price"
 llm:
-  provider: "cerebras"
-  timeout:  1200        # seconds for all LLM providers (deepseek can be slow)
-  max_prompt_tokens: 40000   # trim prompt if over this size (~4 chars/token)
-  
-  anthropic:
-    model:       "claude-opus-4-6"
-    api_key: "ANTHROPIC_API_KEY"
-    max_tokens:  8192
+  # !! REQUIRED !! Set to the provider block name you want to use.
+  provider: "anthropic"
 
+  # Hard timeout for all LLM calls in seconds.
+  # DeepSeek R1 and other reasoning models can be slow — 600s recommended.
+  timeout: 600
+
+  # Trim the prompt if it exceeds this many tokens (~4 chars/token).
+  # Prevents oversized context from exhausting provider limits.
+  max_prompt_tokens: 50000
+
+  # ── Anthropic (Claude) ───────────────────────────────────────
+  anthropic:
+    model:       "claude-opus-4-6"  # or claude-sonnet-4-6 for lower cost
+    api_key_env: "ANTHROPIC_API_KEY"  # name of the environment variable holding your key
+    max_tokens:  16384
+    # Note: temperature and provider routing are not used for Anthropic (native SDK)
+
+  # ── OpenAI ───────────────────────────────────────────────────
   openai:
     model:       "gpt-4o"
-    api_key: "OPENAI_API_KEY"
-    max_tokens:  8192
+    api_key_env: "OPENAI_API_KEY"
+    max_tokens:  16384
+    temperature: 0.6             # 0.0 = deterministic, 1.0 = creative. 0.6 recommended.
+    allow_fallbacks:       true  # allow provider to use fallback models if primary unavailable
+    max_price_prompt:      0.10  # max USD per 1M prompt tokens (filters model selection)
+    max_price_completion:  0.40  # max USD per 1M completion tokens
+    sort:                  "price"  # price | throughput | latency
 
+  # ── OpenRouter ───────────────────────────────────────────────
+  # Access hundreds of models through one API. See https://openrouter.ai/models
   openrouter:
-    # Any model slug from https://openrouter.ai/models
-    model:       "deepseek/deepseek-r1"
-    api_key: "sk"
+    model:       "anthropic/claude-opus-4-6"  # any slug from openrouter.ai/models
+    api_key_env: "OPENROUTER_API_KEY"
     base_url:    "https://openrouter.ai/api/v1"
-    site_url:    ""               # optional HTTP-Referer sent to OR
-    site_name:   "AutoEvolve"    # optional X-Title sent to OR
-    max_tokens:  8192
+    site_url:    ""               # optional: your site URL sent as HTTP-Referer
+    site_name:   "AutoEvolve"    # optional: your app name sent as X-Title
+    max_tokens:  16384
+    temperature: 0.6
+    allow_fallbacks:       true  # if model is unavailable, use cheapest equivalent
+    max_price_prompt:      0.10  # skip models more expensive than this per 1M prompt tokens
+    max_price_completion:  0.40  # skip models more expensive than this per 1M completion tokens
+    sort:                  "price"  # price | throughput | latency
 
+  # ── Chutes.ai ────────────────────────────────────────────────
+  # Free tier available. See https://chutes.ai for model list.
   chutes:
-    # Any model slug from https://chutes.ai
-    model:       "deepseek-ai/DeepSeek-R1-0528-TEE"
-    api_key: "cpk"
+    model:       "deepseek-ai/DeepSeek-R1"
+    api_key:     ""              # paste API key here, OR set api_key_env below
+    api_key_env: "CHUTES_API_KEY"
     base_url:    "https://llm.chutes.ai/v1"
-    max_tokens:  8192
-    
-  cerebras:
-    # Any model slug from https://chutes.ai
-    model:       "gpt-oss-120b"
-    api_key: "csk"
-    base_url:    "https://api.cerebras.ai/v1"
-    max_tokens:  8192
+    max_tokens:  16384
+    temperature: 0.6
+    allow_fallbacks:       true
+    max_price_prompt:      0.10
+    max_price_completion:  0.40
+    sort:                  "price"
 
+  # ── Ollama (local) ───────────────────────────────────────────
+  # Run models locally — no API cost, but requires a capable GPU.
+  # Install: https://ollama.com  |  Pull model: ollama pull codellama:34b
   ollama:
-    model:    "codellama:34b"
+    model:    "codellama:34b"   # or llama3:70b, deepseek-coder:33b, etc.
     base_url: "http://localhost:11434"
-    max_tokens: 8192
+    max_tokens: 16384
+    temperature: 0.6
+    # Routing/pricing params below are ignored by Ollama (local model, no routing)
+    allow_fallbacks:       false
+    max_price_prompt:      0.10
+    max_price_completion:  0.40
+    sort:                  "price"
 
-# ── Dashboard (Streamlit) ─────────────────────────────────────
+
+# ── Dashboard ─────────────────────────────────────────────────
 dashboard:
-  port:         8501
-  host:         "0.0.0.0"
-  refresh_secs: 20
+  port:         8501          # port the web dashboard listens on
+  host:         "0.0.0.0"    # bind address (0.0.0.0 = all interfaces)
+  refresh_secs: 10            # dashboard poll interval in seconds
+
 
 # ── Logging ───────────────────────────────────────────────────
 logging:
   directory: "./logs"
-  level:     "INFO"       # DEBUG | INFO | WARNING | ERROR
+  level:     "INFO"           # DEBUG | INFO | WARNING | ERROR
