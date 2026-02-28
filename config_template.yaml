@@ -6,40 +6,39 @@
 
 # ── AutoEvolve environment ────────────────────────────────────
 autoevolve:
-  venv: "./.venv"            # venv used to run THIS system (main.py)
+  venv: "./.venv312"            # venv used to run THIS system (main.py)
                               # Leave blank if running directly in system Python
 
 # ── FreqTrade ─────────────────────────────────────────────────
 freqtrade:
-  venv:           "~/freqtrade/.venv"       # FreqTrade's own venv
+  root_dir: "D:/Python/freqtrade"   # optional override
+  venv:           "D:/Python/freqtrade/.venv312"       # FreqTrade's own venv
                                              # All FT commands (start/stop/reload) use this
-  config_file:    "./freqtrade_config.json"  # FT config kept HERE in autoevolve folder
-  strategies_dir: "~/freqtrade/user_data/strategies"
-  db_path:        "~/freqtrade/user_data/tradesv3.sqlite"
+  config_file:    "./config.json"  # FT config kept HERE in autoevolve folder
+  strategies_dir: "D:/Python/freqtrade/user_data/strategies/AutoEvolveStrategy"
+  db_path:        "D:/Python/freqtrade/user_data/strategies/AutoEvolveStrategy/AutoEvolveStrategy.dryrun.sqlite"
   strategy_name:  "AutoEvolveStrategy"
-  initial_strategy_file: ""  # optional: path to a .py file to use as gen 1 seed
-  reset_db_after_evolve: true  # wipe trade DB after each successful evolution (recommended)
-                              # if empty, uses the built-in 15m baseline template
-                              # example: "D:/my_strategies/MyStrategy5m.py"
+  initial_strategy_file: "D:/Python/freqtrade/user_data/strategies/AutoEvolveStrategy/AutoEvolveStrategy.py"  # optional: path to a .py file to use as gen 1 seed
+  reset_db_after_evolve: false  # wipe trade DB after each successful evolution (recommended)
 
   # FreqTrade REST API (for hot-reload without restart)
   api:
     host:     "127.0.0.1"
-    port:     8080
-    username: "freqtrade"
-    password: "CHANGE_ME"     # must match freqtrade_config.json api_server.password
+    port:     43000
+    username: ""
+    password: ""     # must match freqtrade_config.json api_server.password
 
   # Extra flags appended when starting FreqTrade
   # e.g. "--dry-run" or "--dry-run --logfile /tmp/ft.log"
   extra_flags: "--dry-run"
 
   # Path where FreqTrade writes its own log (tailed for strategy error detection)
-  logfile: "./logs/freqtrade.log"
+  logfile: "D:/Python/freqtrade/user_data/logs/AutoEvolveStrategy.dryrun.txt"
 
   # Max LLM fix attempts for the same strategy error before giving up
   ft_error_max_fix_attempts: 5
 
-# ── Evolution triggers ────────────────────────────────────────
+# ── Evolution exploration ────────────────────────────────────────
 evolution:
   exploration_mode: "adaptive"   # conservative=fix basics | adaptive=auto | aggressive=always try new
   concepts_to_try:
@@ -54,30 +53,30 @@ evolution:
     - "regime_filter"               # Detect trending vs ranging, switch strategy mode
     - "candlestick_patterns"        # Engulfing, pin bar, inside bar, hammer at S/R
 
+# ── Evolution triggers ────────────────────────────────────────
 trigger:
   consecutive_losses:        3     # evolve after N consecutive losing trades
   min_trades_before_trigger: 10    # don't trigger until at least N trades closed
   cooldown_minutes:          60    # minimum minutes between evolutions
-  idle_trigger_minutes:      5     # evolve if no open trades for this many minutes (0 = disabled)
-
+  idle_trigger_minutes:      20     # evolve if no open trades for this many minutes (0 = disabled)
   # Profit drawdown trigger — fires when cumulative PnL drops X% from its
   # session peak, even if win rate still looks healthy.
   # Example: peak was +10 USDT, drawdown_pct=20 → triggers if PnL falls to +8 USDT.
   # Set to 0 to disable.
   profit_drawdown_pct:         20    # trigger if PnL drops X% from its peak (0 = disabled)
   profit_drawdown_min_trades:  5     # minimum closed trades before this trigger activates
-
+  
 # ── Rollback ──────────────────────────────────────────────────
 rollback:
-  evaluate_after_n_trades:    5     # trades to observe post-deploy before deciding
+  evaluate_after_n_trades:    30     # trades to observe post-deploy before deciding
   rollback_if_winrate_below:  0.35  # rollback if win rate drops below 35%
   rollback_if_drawdown_above: 0.15  # rollback if drawdown exceeds 15%
-  monitoring_timeout_minutes: 60   # exit monitoring if no trades for this long
+  monitoring_timeout_minutes: 10   # exit monitoring if no trades for this long
 
 # ── Checkpoints ───────────────────────────────────────────────
 checkpoints:
   directory:       "./checkpoints"
-  max_generations: 10               # keep last N, prune older ones
+  max_generations: 100               # keep last N, prune older ones
 
 # ── Optimization targets (fed to LLM as context) ──────────────
 optimization:
@@ -88,37 +87,26 @@ optimization:
     max_drawdown:  0.10
 
 # ── LLM Provider ──────────────────────────────────────────────
-# provider: set to any name below. anthropic and ollama are special-cased.
-# Any other name (openai, openrouter, chutes, or your own custom name) is
-# treated as an OpenAI-compatible REST endpoint — just define a config block
-# with the same name containing: model, api_key (or api_key_env), base_url.
-# Example custom provider:
-#   llm:
-#     provider: "myprovider"
-#     myprovider:
-#       model: "my-model"
-#       base_url: "https://api.myprovider.com/v1"
-#       api_key: "sk-..."
-#       max_tokens: 8192
+# provider options: anthropic | openai | openrouter | chutes | ollama
 llm:
-  provider: "anthropic"
-  timeout:  600        # seconds for all LLM providers (deepseek can be slow)
-  max_prompt_tokens: 50000   # trim prompt if over this size (~4 chars/token)
-
+  provider: "cerebras"
+  timeout:  1200        # seconds for all LLM providers (deepseek can be slow)
+  max_prompt_tokens: 40000   # trim prompt if over this size (~4 chars/token)
+  
   anthropic:
     model:       "claude-opus-4-6"
-    api_key_env: "ANTHROPIC_API_KEY"
+    api_key: "ANTHROPIC_API_KEY"
     max_tokens:  8192
 
   openai:
     model:       "gpt-4o"
-    api_key_env: "OPENAI_API_KEY"
+    api_key: "OPENAI_API_KEY"
     max_tokens:  8192
 
   openrouter:
     # Any model slug from https://openrouter.ai/models
-    model:       "anthropic/claude-opus-4-6"
-    api_key_env: "OPENROUTER_API_KEY"
+    model:       "deepseek/deepseek-r1"
+    api_key: "sk"
     base_url:    "https://openrouter.ai/api/v1"
     site_url:    ""               # optional HTTP-Referer sent to OR
     site_name:   "AutoEvolve"    # optional X-Title sent to OR
@@ -126,10 +114,16 @@ llm:
 
   chutes:
     # Any model slug from https://chutes.ai
-    model:       "deepseek-ai/DeepSeek-R1"
-    api_key:     ""              # paste key directly here, OR use api_key_env below
-    api_key_env: "CHUTES_API_KEY"   # env var name (used only if api_key is empty)
+    model:       "deepseek-ai/DeepSeek-R1-0528-TEE"
+    api_key: "cpk"
     base_url:    "https://llm.chutes.ai/v1"
+    max_tokens:  8192
+    
+  cerebras:
+    # Any model slug from https://chutes.ai
+    model:       "gpt-oss-120b"
+    api_key: "csk"
+    base_url:    "https://api.cerebras.ai/v1"
     max_tokens:  8192
 
   ollama:
@@ -141,7 +135,7 @@ llm:
 dashboard:
   port:         8501
   host:         "0.0.0.0"
-  refresh_secs: 10
+  refresh_secs: 20
 
 # ── Logging ───────────────────────────────────────────────────
 logging:
