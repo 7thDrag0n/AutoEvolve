@@ -1,5 +1,8 @@
 # 🤖 AutoEvolve
 
+<img width="1481" height="672" alt="image" src="https://github.com/user-attachments/assets/421a83f9-ae57-4ed1-b2a1-74e102fa3ba9" />
+
+
 **AutoEvolve** is a self-improving trading bot system built on top of [FreqTrade](https://www.freqtrade.io/). It uses a large language model (LLM) to continuously analyse trading performance, rewrite its own strategy code, deploy it, and roll back if results worsen — all without human intervention.
 
 > ⚠️ **This is experimental software. Trade only what you can afford to lose. Always test in dry-run mode first.**
