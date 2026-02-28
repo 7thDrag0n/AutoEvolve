@@ -106,6 +106,10 @@ _STRATEGY_ERROR_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
     r"AttributeError", r"NameError", r"SyntaxError", r"IndentationError",
     r"ImportError.*strategy", r"Could not load strategy", r"Error loading strategy",
     r"Strategy.*not found",
+    r"Fatal exception",           # FT process crash with traceback
+    r"AttributeError.*DataProvider",  # missing DP method called from strategy
+    r"AttributeError.*informative",   # missing method in informative_pairs
+    r"object has no attribute",   # broad AttributeError catch in strategy context
     # Runtime errors in strategy methods
     r"TypeError.*populate_", r"TypeError.*custom_stoploss",
     r"TypeError.*leverage", r"TypeError.*confirm_trade", r"TypeError.*custom_exit",
@@ -829,10 +833,26 @@ class FTHealthMonitor:
 
         # Check if it's still a running process at all
         if not self._ft.is_running():
-            # Process is dead — let orchestrator's process-died logic handle it
+            # Process is dead — scan log to see if a strategy error caused the crash
             append_log("WARNING",
-                f"FT health: API unreachable and process not found "
-                f"({tok_or_err})")
+                f"FT health: process dead (API unreachable) — scanning log for cause")
+            is_strategy_err, excerpt = self._ft.check_for_strategy_error()
+            if is_strategy_err:
+                state = read_state()
+                already_fixing = state.get("status") == "fixing_ft_error"
+                if not already_fixing:
+                    append_log("WARNING",
+                        f"FT health: strategy error caused crash — requesting auto-fix")
+                    write_state({"ft_error_full": excerpt, "ft_error": excerpt[:300]})
+                    if self.on_strategy_error:
+                        try:
+                            self.on_strategy_error(excerpt, crashed=True)
+                        except Exception as e:
+                            logger.error(f"on_strategy_error callback error: {e}")
+            else:
+                append_log("WARNING",
+                    f"FT health: process dead, no strategy error found — "
+                    f"may be external crash or OOM ({tok_or_err})")
             return
 
         # Process alive but API down — classify the log

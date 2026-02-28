@@ -78,6 +78,11 @@ STRICT RULES:
 5. Preserve ALL method signatures: populate_indicators, populate_entry_trend,
    populate_exit_trend, custom_stoploss, leverage, custom_exit, confirm_trade_entry.
 6. Allowed imports: talib, pandas, numpy, scipy, standard FreqTrade imports only.
+7. FORBIDDEN DataProvider calls — these do NOT exist and will crash FT:
+   self.dp.market_pair_list, self.dp.get_pair_dataframe_with_candles,
+   self.dp.get_analyzed_dataframe_between, self.dp.get_all_pair_dataframes.
+   Only use: self.dp.get_pair_dataframe(pair, timeframe),
+   self.dp.current_whitelist(), self.dp.runmode.
 7. Start the file with this EXACT comment block (fill in the brackets):
 
 # GENERATION_METADATA = {{
