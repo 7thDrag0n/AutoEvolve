@@ -217,12 +217,19 @@ class Orchestrator:
             write_state({"cooldown_remaining_min": 0})
             return False
 
-        # ── Track open trade activity ───────────────────────────
-        open_trades = snap.get("total_open", 0)
-        if open_trades > 0:
-            self._last_open_trade = datetime.now().astimezone()
+        # ── Track last trade entry time (from DB, not open count) ─
+        # Idle trigger should fire when no NEW trade was opened — having 3
+        # open trades doesn't mean the strategy is actively entering positions.
+        last_entry_str = snap.get("last_entry_date", "")
+        if last_entry_str:
+            try:
+                last_entry_dt = datetime.fromisoformat(last_entry_str).astimezone()
+                if last_entry_dt > self._last_open_trade:
+                    self._last_open_trade = last_entry_dt
+            except Exception:
+                pass
 
-        # ── Idle trigger: no open trades for X minutes ──────────
+        # ── Idle trigger: no new trade entry for X minutes ──────
         idle_minutes = idle_min
         if idle_minutes > 0 and ft_running:
             idle_elapsed = (
@@ -237,7 +244,7 @@ class Orchestrator:
                 "idle_trigger_ready": idle_elapsed >= idle_minutes and cooldown_remaining == 0,
             }})
             if idle_elapsed >= idle_minutes and not _in_cooldown():
-                msg = (f"IDLE TRIGGER: no open trades for "
+                msg = (f"IDLE TRIGGER: no new trade entry for "
                        f"{idle_elapsed:.1f} min (threshold={idle_minutes}) "
                        f"-> evolving gen {self._current_gen} -> {self._current_gen + 1}")
                 logger.warning(msg); append_log("WARNING", msg)

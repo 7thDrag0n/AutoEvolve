@@ -276,6 +276,15 @@ class Harvester:
         closed = df[df["is_open"] == 0].copy()
         open_  = df[df["is_open"] == 1]
 
+        # Most recent trade entry time (open or closed) — used by idle trigger
+        # to detect when the strategy last opened a position
+        last_entry_date = ""
+        if "open_date" in df.columns and not df.empty:
+            try:
+                last_entry_date = str(df["open_date"].max())[:19]
+            except Exception:
+                pass
+
         metrics = self._compute_metrics(closed)
 
         # Recent trades (last 20 closed) for LLM context
@@ -307,6 +316,7 @@ class Harvester:
             "total_closed": int(len(closed)),
             "total_open":   int(len(open_)),
             "consecutive_losses": self._consecutive_losses(closed),
+            "last_entry_date":    last_entry_date,
             "metrics":      metrics,
             "recent":       recent,
         }
