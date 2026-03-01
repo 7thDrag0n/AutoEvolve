@@ -202,6 +202,16 @@ llm:
   # !! REQUIRED !! Set to the provider block name you want to use.
   provider: "anthropic"
 
+  # Extra imports the LLM is allowed to use, beyond the built-in verified list.
+  # The system prompt already includes all standard FreqTrade imports (IStrategy,
+  # Trade, stoploss_from_open, informative, etc.) and Python stdlib (logging,
+  # datetime, typing, collections, math...).
+  # Only add third-party libraries here that you have installed.
+  extra_allowed_imports: []
+  #  - "ta"                       # if you have the 'ta' library installed
+  #  - "sklearn.preprocessing"    # if you have scikit-learn installed
+  #  - "torch"                    # if you have PyTorch installed
+
   # Hard timeout for all LLM calls in seconds.
   # DeepSeek R1 and other reasoning models can be slow — 600s recommended.
   timeout: 600
