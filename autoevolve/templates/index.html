@@ -566,17 +566,29 @@ function renderTriggers() {
   if (ddThresh > 0) {
     if (ddCur == null) {
       const _waitPnl = ts.dd_current_pnl != null ? ts.dd_current_pnl : null;
+      const _pnlSign = _waitPnl != null && _waitPnl >= 0 ? '+' : '';
+      const _pnlCls  = _waitPnl == null ? '' : _waitPnl >= 0 ? 'trig-ok' : 'trig-warn';
       const _pnlStr  = _waitPnl != null
-        ? `  ·  equity: ${_waitPnl >= 0 ? '+' : ''}${_waitPnl.toFixed(4)} USDT`
+        ? `  ·  equity ${_pnlSign}${_waitPnl.toFixed(4)} USDT`
         : '';
-      rows.push(row('Profit drawdown', `waiting for ${ts.trades_min||0} trades${_pnlStr}`, 'trig-dim'));
+      // Show how far along the drawdown threshold we are even while waiting
+      const _ddThPct = ts.dd_threshold_pct || 0;
+      let _ddProg = '';
+      if (_waitPnl != null && ts.dd_peak_pnl != null && ts.dd_peak_pnl > 0) {
+        const _ddCurPct = (ts.dd_peak_pnl - _waitPnl) / ts.dd_peak_pnl * 100;
+        _ddProg = `  ·  dd ${_ddCurPct.toFixed(1)}% / ${_ddThPct}%`;
+      }
+      rows.push(row('Profit drawdown',
+        `waiting for ${ts.trades_min||0} trades${_pnlStr}${_ddProg}`,
+        _pnlCls || 'trig-dim'));
     } else {
       const ddFill = Math.min(ddCur / ddThresh, 1);
       const ddCls  = ddFill >= 1 ? 'trig-hot' : ddFill >= 0.7 ? 'trig-warn' : 'trig-ok';
       const peak   = ts.dd_peak_pnl   != null ? ts.dd_peak_pnl.toFixed(4)   : '—';
       const cur    = ts.dd_current_pnl != null ? ts.dd_current_pnl.toFixed(4): '—';
+      const curSign = ts.dd_current_pnl != null && ts.dd_current_pnl >= 0 ? '+' : '';
       rows.push(row('Profit drawdown',
-        `${ddCur.toFixed(1)}% / ${ddThresh}% from peak  (peak ${peak} → now ${cur} USDT)`,
+        `${ddCur.toFixed(1)}% / ${ddThresh}%  ·  equity ${curSign}${cur} USDT  (peak ${peak})`,
         ddCls));
     }
   } else {

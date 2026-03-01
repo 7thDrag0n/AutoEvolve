@@ -203,6 +203,10 @@ class Orchestrator:
                 "dd_threshold_pct":       dd_pct,
                 "dd_min_trades":          dd_min,
                 "idle_threshold_min":     idle_min if idle_min > 0 else None,
+                # Always show current PnL (closed + open unrealized) for the drawdown panel
+                "dd_current_pnl":         self._current_equity_pnl(snap),
+                "dd_current_pct_of_peak": None,   # not enough trades yet
+                "trades_min":             dd_min,
             },
         })
 
@@ -472,6 +476,16 @@ class Orchestrator:
             f"✅ FT error fix deployed gen {broken_gen} — resuming…")
 
     # ── Evolution ──────────────────────────────────────────────
+    def _current_equity_pnl(self, snap: dict) -> float:
+        """Closed PnL + current unrealized PnL from open trades."""
+        closed_pnl = snap.get("metrics", {}).get("current_pnl", 0.0) or 0.0
+        try:
+            open_profits = self.deployer.ft.api_open_trade_profits()
+            unrealized = sum(t.get("profit_abs", 0) for t in open_profits)
+        except Exception:
+            unrealized = 0.0
+        return round(closed_pnl + unrealized, 4)
+
     def _merge_open_profits(self, open_list: list) -> list:
         """Enrich open trade list with current unrealized profit from FT REST API."""
         if not open_list:
