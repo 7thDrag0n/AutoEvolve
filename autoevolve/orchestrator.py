@@ -139,7 +139,7 @@ class Orchestrator:
         write_state({
             "total_trades":  _snap_always.get("total_closed", 0),
             "open_trades":      _snap_always.get("total_open", 0),
-            "open_trades_list": _snap_always.get("open_list", []),
+            "open_trades_list": self._merge_open_profits(_snap_always.get("open_list", [])),
             "metrics":       _snap_always.get("metrics", {}),
             "recent_trades": _snap_always.get("recent", []),
             "snapshot_at":   local_str(),
@@ -435,6 +435,21 @@ class Orchestrator:
             f"✅ FT error fix deployed gen {broken_gen} — resuming…")
 
     # ── Evolution ──────────────────────────────────────────────
+    def _merge_open_profits(self, open_list: list) -> list:
+        """Enrich open trade list with current unrealized profit from FT REST API."""
+        if not open_list:
+            return open_list
+        try:
+            profits = self.deployer.ft.api_open_trade_profits()
+            by_pair = {p["pair"]: p for p in profits}
+            for t in open_list:
+                p = by_pair.get(t["pair"], {})
+                t["profit_pct"] = p.get("profit_pct")
+                t["profit_abs"] = p.get("profit_abs")
+        except Exception:
+            pass
+        return open_list
+
     def _evolve(self, snap: dict, reason: str) -> None:
         if self._evolving:
             append_log("WARNING", "Evolution already in progress — skipping")

@@ -114,7 +114,7 @@ select{width:100%;padding:5px 8px;background:var(--panel);border:1px solid var(-
 /* Tabs */
 .tabs{display:flex;gap:3px;margin-bottom:12px;border-bottom:1px solid var(--border)}
 .tab{padding:6px 14px;font-family:var(--mono);font-size:.7rem;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .1s,border-color .1s}
-.tab.active{color:var(--text);border-bottom-color:var(--amber)}
+.tab.active{color:var(--amber);border-bottom-color:var(--amber);font-weight:600}
 .tab:hover:not(.active){color:var(--text)}
 .tabpanel{display:none}.tabpanel.active{display:block}
 
@@ -264,11 +264,11 @@ tr:hover td{background:rgba(255,255,255,.015)}
     <!-- Open / Closed sub-tabs -->
     <div style="display:flex;gap:0;margin-bottom:8px">
       <button id="stab-open" onclick="setTradeTab('open')"
-        style="font-size:.62rem;font-family:var(--mono);padding:3px 12px;border:1px solid var(--border);cursor:pointer;border-radius:3px 0 0 3px;background:var(--accent);color:#000">
+        style="font-size:.62rem;font-family:var(--mono);padding:3px 12px;border:1px solid var(--border);cursor:pointer;border-radius:3px 0 0 3px;background:var(--panel);color:var(--amber);font-weight:600;border-bottom:2px solid var(--amber)">
         ▶ Open
       </button>
       <button id="stab-closed" onclick="setTradeTab('closed')"
-        style="font-size:.62rem;font-family:var(--mono);padding:3px 12px;border:1px solid var(--border);cursor:pointer;border-radius:0 3px 3px 0;background:var(--surface2);color:var(--fg)">
+        style="font-size:.62rem;font-family:var(--mono);padding:3px 12px;border:1px solid var(--border);cursor:pointer;border-radius:0 3px 3px 0;background:var(--surface);color:var(--muted);border-bottom:2px solid transparent">
         ✓ Closed
       </button>
     </div>
@@ -277,6 +277,7 @@ tr:hover td{background:rgba(255,255,255,.015)}
       <table class="trade-table">
         <thead><tr>
           <th>#</th><th>Pair</th><th>Dir</th><th>Lev</th>
+          <th>Profit %</th><th>Profit USDT</th>
           <th>Open rate</th><th>Stake USDT</th><th>Duration</th>
           <th>Entry tag</th><th>Open time</th>
         </tr></thead>
@@ -371,14 +372,20 @@ function setTradeTab(which) {
   const closedBtn  = document.getElementById('stab-closed');
   const openPanel  = document.getElementById('trades-open-panel');
   const closedPanel= document.getElementById('trades-closed-panel');
+  const activeStyle   = {background:'var(--panel)',  color:'var(--amber)', fontWeight:'600', borderBottom:'2px solid var(--amber)'};
+  const inactiveStyle = {background:'var(--surface)', color:'var(--muted)',  fontWeight:'',    borderBottom:'2px solid transparent'};
+  function applyStyle(btn, s) {
+    btn.style.background  = s.background;
+    btn.style.color       = s.color;
+    btn.style.fontWeight  = s.fontWeight;
+    btn.style.borderBottom = s.borderBottom;
+  }
   if (which === 'open') {
-    openBtn.style.background   = 'var(--accent)'; openBtn.style.color = '#000';
-    closedBtn.style.background = 'var(--surface2)'; closedBtn.style.color = 'var(--fg)';
+    applyStyle(openBtn, activeStyle); applyStyle(closedBtn, inactiveStyle);
     openPanel.style.display   = '';
     closedPanel.style.display = 'none';
   } else {
-    closedBtn.style.background = 'var(--accent)'; closedBtn.style.color = '#000';
-    openBtn.style.background   = 'var(--surface2)'; openBtn.style.color = 'var(--fg)';
+    applyStyle(closedBtn, activeStyle); applyStyle(openBtn, inactiveStyle);
     openPanel.style.display   = 'none';
     closedPanel.style.display = '';
   }
@@ -423,11 +430,19 @@ function renderTrades() {
           ? `${Math.floor(t.duration_min/60)}h ${Math.round(t.duration_min%60)}m`
           : `${Math.round(t.duration_min)}m`;
         const tag = esc(t.enter_tag || '—');
+        const ppct  = t.profit_pct != null ? t.profit_pct : null;
+        const pabs  = t.profit_abs != null ? t.profit_abs : null;
+        const pCls  = ppct == null ? '' : ppct >= 0 ? 't-win' : 't-loss';
+        const pSign = ppct != null && ppct >= 0 ? '+' : '';
+        const pPct  = ppct != null ? `${pSign}${ppct.toFixed(3)}%` : '…';
+        const pAbs  = pabs != null ? `${pabs >= 0 ? '+' : ''}${pabs.toFixed(4)}` : '…';
         return `<tr>
           <td style="color:var(--muted)">${i+1}</td>
           <td class="t-pair">${esc(t.pair)}</td>
           <td>${dir}</td>
           <td>${lev}</td>
+          <td class="${pCls}">${pPct}</td>
+          <td class="${pCls}">${pAbs}</td>
           <td style="color:var(--muted)">${t.open_rate}</td>
           <td style="color:var(--muted)">${t.stake}</td>
           <td style="color:var(--amber)">${dur}</td>

@@ -617,6 +617,37 @@ class FTManager:
         except Exception as e:
             return False, str(e)
 
+    def api_open_trade_profits(self) -> list[dict]:
+        """
+        Fetch current unrealized profit for each open trade via FT REST API.
+        Returns list of {pair, profit_pct, profit_abs} or [] on failure.
+        """
+        try:
+            ok, token = self._api_auth()
+            if not ok:
+                return []
+            import requests as _req
+            api  = cfg("freqtrade", "api", default={})
+            host = api.get("host", "127.0.0.1")
+            port = api.get("port", 8080)
+            r = _req.get(
+                f"http://{host}:{port}/api/v1/status",
+                headers={"Authorization": f"Bearer {token}"}, timeout=5,
+            )
+            if r.status_code != 200:
+                return []
+            trades = r.json() if isinstance(r.json(), list) else r.json().get("trades", [])
+            return [
+                {
+                    "pair":       t.get("pair", ""),
+                    "profit_pct": round(float(t.get("profit_pct", t.get("profit_ratio", 0)) * 100), 3),
+                    "profit_abs": round(float(t.get("profit_abs", t.get("total_profit_abs", 0))), 4),
+                }
+                for t in trades
+            ]
+        except Exception:
+            return []
+
     def api_reload(self) -> bool:
         ok, token = self._api_auth()
         if not ok:
