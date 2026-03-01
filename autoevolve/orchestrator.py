@@ -236,24 +236,37 @@ class Orchestrator:
             idle_elapsed = (
                 datetime.now().astimezone() - self._last_open_trade
             ).total_seconds() / 60
+
+            # Suppress idle trigger if all slots are full — strategy can't open
+            # new trades when max_open_trades is reached, so idleness is expected.
+            slots_current, slots_max = self.deployer.ft.api_slot_count()
+            slots_full = (slots_max > 0 and slots_current >= slots_max)
+
+            idle_trigger_ready = idle_elapsed >= idle_minutes and cooldown_remaining == 0 and not slots_full
             write_state({"idle_minutes": round(idle_elapsed, 1),
                          "idle_trigger_minutes": idle_minutes})
             write_state({"trigger_status": {
                 **read_state().get("trigger_status", {}),
-                "idle_elapsed_min":  round(idle_elapsed, 1),
+                "idle_elapsed_min":   round(idle_elapsed, 1),
                 "idle_threshold_min": idle_minutes,
-                "idle_trigger_ready": idle_elapsed >= idle_minutes and cooldown_remaining == 0,
+                "idle_trigger_ready": idle_trigger_ready,
+                "slots_full":         slots_full,
+                "slots_current":      slots_current if slots_current >= 0 else None,
+                "slots_max":          slots_max     if slots_max     >= 0 else None,
             }})
             if idle_elapsed >= idle_minutes and not _in_cooldown():
-                msg = (f"IDLE TRIGGER: no new trade entry for "
-                       f"{idle_elapsed:.1f} min (threshold={idle_minutes}) "
-                       f"-> evolving gen {self._current_gen} -> {self._current_gen + 1}")
-                logger.warning(msg); append_log("WARNING", msg)
-                self.journal.record(EV_TRIGGERED, self._current_gen,
-                                    {"reason": "idle", "idle_minutes": idle_elapsed,
-                                     "metrics": snap.get("metrics", {})})
-                self._evolve(snap, "idle_no_open_trades")
-                return
+                if slots_full:
+                    logger.debug(f"Idle trigger suppressed: slots full ({slots_current}/{slots_max})")
+                else:
+                    msg = (f"IDLE TRIGGER: no new trade entry for "
+                           f"{idle_elapsed:.1f} min (threshold={idle_minutes}) "
+                           f"-> evolving gen {self._current_gen} -> {self._current_gen + 1}")
+                    logger.warning(msg); append_log("WARNING", msg)
+                    self.journal.record(EV_TRIGGERED, self._current_gen,
+                                        {"reason": "idle", "idle_minutes": idle_elapsed,
+                                         "metrics": snap.get("metrics", {})})
+                    self._evolve(snap, "idle_no_open_trades")
+                    return
 
         # Write idle=disabled state when not configured
         if not idle_minutes:
@@ -283,6 +296,20 @@ class Orchestrator:
                                 {"losses": losses, "metrics": snap.get("metrics", {})})
             self._evolve(snap, reason)
             return
+
+        # ── Enrich metrics with open trade unrealized PnL ──────
+        # Drawdown should account for unrealized losses on open trades,
+        # not just closed trade PnL.
+        open_profits = self.deployer.ft.api_open_trade_profits()
+        if open_profits:
+            unrealized = sum(t.get("profit_abs", 0) for t in open_profits)
+            current_pnl = metrics.get("current_pnl", 0.0) + unrealized
+            peak_pnl    = metrics.get("peak_pnl", 0.0)
+            # Recompute drawdown pct with open trades included
+            if peak_pnl > 0 and current_pnl < peak_pnl:
+                metrics = dict(metrics)
+                metrics["current_pnl"]      = round(current_pnl, 4)
+                metrics["pnl_drawdown_pct"] = round((peak_pnl - current_pnl) / peak_pnl * 100, 2)
 
         # ── Profit drawdown trigger ──────────────────────────────
         if dd_pct > 0 and total >= dd_min:
@@ -315,11 +342,21 @@ class Orchestrator:
                 self._evolve(snap, reason)
                 return
         else:
+            # Still write current PnL so dashboard can show equity even while waiting
+            _m   = snap.get("metrics", {})
+            _cur = _m.get("current_pnl", 0.0)
+            # Add unrealized open PnL here too
+            _open_p = self.deployer.ft.api_open_trade_profits()
+            if _open_p:
+                _cur = round(_cur + sum(t.get("profit_abs", 0) for t in _open_p), 4)
             write_state({"trigger_status": {
                 **read_state().get("trigger_status", {}),
                 "dd_current_pct":   None,
                 "dd_threshold_pct": dd_pct,
+                "dd_current_pnl":   round(_cur, 4),
+                "dd_peak_pnl":      None,
                 "dd_trigger_ready": False,
+                "trades_min":       dd_min,
             }})
 
     # ── Strategy error handler (called from ft_monitor.py too) ─

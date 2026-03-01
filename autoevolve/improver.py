@@ -103,7 +103,7 @@ EXPLORATION MODE: {mode}
 """
 
 _CODE_SYSTEM = """\
-You are the best Python programmer with deep knowledge of the FreqTrade platform, cryptocurrency futures markets, and quantitative trading strategies. You use all resources and techniques available for writing high-quality, production-grade Python code.
+You are an advanced expert Python programmer with deep knowledge of the FreqTrade platform, cryptocurrency futures markets, math, finances, and quantitative trading strategies. You use all resources and techniques available for writing high-quality, production-grade Python code.
 
 STRICT RULES:
 1. Return ONLY valid Python — no markdown fences, no prose outside comments.

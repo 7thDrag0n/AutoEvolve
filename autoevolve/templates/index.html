@@ -434,7 +434,7 @@ function renderTrades() {
         const pabs  = t.profit_abs != null ? t.profit_abs : null;
         const pCls  = ppct == null ? '' : ppct >= 0 ? 't-win' : 't-loss';
         const pSign = ppct != null && ppct >= 0 ? '+' : '';
-        const pPct  = ppct != null ? `${pSign}${ppct.toFixed(3)}%` : '…';
+        const pPct  = ppct != null ? `${pSign}${ppct.toFixed(2)}%` : '…';
         const pAbs  = pabs != null ? `${pabs >= 0 ? '+' : ''}${pabs.toFixed(4)}` : '…';
         return `<tr>
           <td style="color:var(--muted)">${i+1}</td>
@@ -478,7 +478,7 @@ function renderTrades() {
       <td class="t-pair">${esc(t.pair)}</td>
       <td>${dir}</td>
       <td>${lev}</td>
-      <td class="${pCls}">${pSign}${pct.toFixed(3)}%</td>
+      <td class="${pCls}">${pSign}${pct.toFixed(2)}%</td>
       <td class="${pCls}">${pct > 0 ? '+' : ''}${abs.toFixed(4)}</td>
       <td style="color:var(--muted)">${dur}</td>
       <td class="t-tag" title="${tag}">${tag}</td>
@@ -541,10 +541,20 @@ function renderTriggers() {
   if (idleThresh) {
     const ie = idleElapsed ?? 0;
     const iRem = Math.max(0, idleThresh - ie);
-    const iCls = ie >= idleThresh ? 'trig-hot' : ie > idleThresh * 0.7 ? 'trig-warn' : 'trig-ok';
-    const iStr = ie >= idleThresh
-      ? `${ie.toFixed(1)}m idle — TRIGGER READY`
-      : `${ie.toFixed(1)}m idle  (${iRem.toFixed(1)}m until trigger)`;
+    const slotsFull = ts.slots_full;
+    const slotsInfo = (ts.slots_current != null && ts.slots_max != null)
+      ? ` (${ts.slots_current}/${ts.slots_max} slots)` : '';
+    let iCls, iStr;
+    if (slotsFull) {
+      iCls = 'trig-dim';
+      iStr = `${ie.toFixed(1)}m idle — suppressed: slots full${slotsInfo}`;
+    } else if (ie >= idleThresh) {
+      iCls = 'trig-hot';
+      iStr = `${ie.toFixed(1)}m idle — TRIGGER READY`;
+    } else {
+      iCls = ie > idleThresh * 0.7 ? 'trig-warn' : 'trig-ok';
+      iStr = `${ie.toFixed(1)}m idle  (${iRem.toFixed(1)}m until trigger)`;
+    }
     rows.push(row('Idle trigger', iStr, iCls));
   } else {
     rows.push(row('Idle trigger', 'disabled', 'trig-dim'));
@@ -555,7 +565,11 @@ function renderTriggers() {
   const ddThresh = ts.dd_threshold_pct || 0;
   if (ddThresh > 0) {
     if (ddCur == null) {
-      rows.push(row('Profit drawdown', `waiting for ${ts.trades_min||0} trades`, 'trig-dim'));
+      const _waitPnl = ts.dd_current_pnl != null ? ts.dd_current_pnl : null;
+      const _pnlStr  = _waitPnl != null
+        ? `  ·  equity: ${_waitPnl >= 0 ? '+' : ''}${_waitPnl.toFixed(4)} USDT`
+        : '';
+      rows.push(row('Profit drawdown', `waiting for ${ts.trades_min||0} trades${_pnlStr}`, 'trig-dim'));
     } else {
       const ddFill = Math.min(ddCur / ddThresh, 1);
       const ddCls  = ddFill >= 1 ? 'trig-hot' : ddFill >= 0.7 ? 'trig-warn' : 'trig-ok';

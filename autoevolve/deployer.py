@@ -617,6 +617,30 @@ class FTManager:
         except Exception as e:
             return False, str(e)
 
+    def api_slot_count(self) -> tuple[int, int]:
+        """
+        Call FT /api/v1/count to get (current_open, max_open_trades).
+        Returns (-1, -1) on failure. max=-1 means unlimited in FT.
+        """
+        try:
+            ok, token = self._api_auth()
+            if not ok:
+                return -1, -1
+            import requests as _req
+            api  = cfg("freqtrade", "api", default={})
+            host = api.get("host", "127.0.0.1")
+            port = api.get("port", 8080)
+            r = _req.get(
+                f"http://{host}:{port}/api/v1/count",
+                headers={"Authorization": f"Bearer {token}"}, timeout=5,
+            )
+            if r.status_code != 200:
+                return -1, -1
+            data = r.json()
+            return int(data.get("current", -1)), int(data.get("max", -1))
+        except Exception:
+            return -1, -1
+
     def api_open_trade_profits(self) -> list[dict]:
         """
         Fetch current unrealized profit for each open trade via FT REST API.
@@ -640,7 +664,7 @@ class FTManager:
             return [
                 {
                     "pair":       t.get("pair", ""),
-                    "profit_pct": round(float(t.get("profit_pct", t.get("profit_ratio", 0)) * 100), 3),
+                    "profit_pct": round(float(t.get("profit_pct", t.get("profit_ratio", 0) * 100)), 2),
                     "profit_abs": round(float(t.get("profit_abs", t.get("total_profit_abs", 0))), 4),
                 }
                 for t in trades
