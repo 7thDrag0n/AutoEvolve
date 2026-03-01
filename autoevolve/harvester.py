@@ -309,7 +309,7 @@ class Harvester:
             recent.append({
                 "pair":         r.get("pair", ""),
                 "is_short":     bool(r.get("is_short", 0)),
-                "leverage":     round(float(r.get("leverage", 1.0)), 1),
+                "leverage":     round(float(r.get("leverage") or 1.0), 1),
                 "profit_pct":   round(float(r.get("profit_ratio", 0)) * 100, 3),
                 "profit_abs":   round(float(r.get("profit_abs", 0)),  4),
                 "funding_fees": round(float(r.get("funding_fees", 0)), 4),
@@ -320,6 +320,31 @@ class Harvester:
                 "close_date":   close_dt_fmt,
             })
 
+        # Open trade details for dashboard
+        open_list = []
+        for _, r in open_.iterrows():
+            open_dt = str(r.get("open_date", ""))
+            try:
+                from datetime import datetime as _dt, timezone as _tz
+                open_dt_fmt = _dt.fromisoformat(open_dt[:19]).strftime("%b %d %H:%M")
+                # Duration so far
+                od = _dt.fromisoformat(open_dt[:19]).replace(tzinfo=_tz.utc)
+                dur_min = round(((_dt.now(_tz.utc) - od).total_seconds()) / 60, 1)
+            except Exception:
+                open_dt_fmt = open_dt[:16]
+                dur_min = 0.0
+
+            open_list.append({
+                "pair":       r.get("pair", ""),
+                "is_short":   bool(r.get("is_short", 0)),
+                "leverage":   round(float(r.get("leverage") or 1.0), 1),
+                "open_rate":  round(float(r.get("open_rate", 0)), 6),
+                "stake":      round(float(r.get("open_trade_value", r.get("stake_amount", 0))), 2),
+                "enter_tag":  str(r.get("enter_tag", "")),
+                "open_date":  open_dt_fmt,
+                "duration_min": dur_min,
+            })
+
         return {
             "total_closed": int(len(closed)),
             "total_open":   int(len(open_)),
@@ -327,6 +352,7 @@ class Harvester:
             "last_entry_date":    last_entry_date,
             "metrics":      metrics,
             "recent":       recent,
+            "open_list":    open_list,
         }
 
     def trades_since(self, since_dt_str: str) -> dict:

@@ -101,11 +101,27 @@ class CheckpointManager:
 # ══════════════════════════════════════════════════════════════
 # FT error classifier
 # ══════════════════════════════════════════════════════════════
+def _strategy_logger_error_re() -> re.Pattern:
+    """
+    Match any ERROR line where the logger IS the strategy class itself.
+    e.g. "2026-03-01 14:38:40,813 - AutoEvolveStrategy - ERROR - Error in ..."
+    The strategy name is read fresh each call so hot-reload of config works.
+    """
+    sname = cfg("freqtrade", "strategy_name", default="AutoEvolveStrategy")
+    return re.compile(
+        r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d+\s+-\s+"
+        + re.escape(sname)
+        + r"\s+-\s+ERROR\s+-",
+        re.IGNORECASE,
+    )
+
+
 _STRATEGY_ERROR_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
     # Hard crashes
     r"AttributeError", r"NameError", r"SyntaxError", r"IndentationError",
     r"ImportError.*strategy", r"Could not load strategy", r"Error loading strategy",
     r"Strategy.*not found",
+    r"Impossible to load Strategy",  # FT import failure (preceded by the actual error)
     r"Fatal exception",           # FT process crash with traceback
     r"AttributeError.*DataProvider",  # missing DP method called from strategy
     r"AttributeError.*informative",   # missing method in informative_pairs
@@ -199,6 +215,8 @@ _STRATEGY_FILE_RE = re.compile(
 def _block_is_strategy_error(block_lines: list[str], full_text: str) -> bool:
     """
     A block is a strategy error if ANY of:
+    0. Any line is an ERROR logged by the strategy class itself
+       (logger name == strategy_name) — catches "Error in populate_*" etc.
     1. Contains a Python Traceback + any exception line
        (the traceback itself is proof it originated in code)
     2. Matches one of the explicit _STRATEGY_ERROR_PATTERNS
@@ -206,6 +224,12 @@ def _block_is_strategy_error(block_lines: list[str], full_text: str) -> bool:
        (FT's per-pair wrapper around strategy crashes)
     AND it does NOT match external/network patterns.
     """
+    # Rule 0: ERROR logged by the strategy itself (most reliable signal)
+    # e.g. "2026-03-01 ... - AutoEvolveStrategy - ERROR - Error in populate_indicators: ..."
+    _strat_err_re = _strategy_logger_error_re()
+    if any(_strat_err_re.search(ln) for ln in block_lines):
+        return True
+
     # Rule 1: Traceback + exception line anywhere in block
     has_traceback = _TRACEBACK_MARKER in full_text
     has_exception = any(_EXCEPTION_LINE_RE.search(ln) for ln in block_lines)
@@ -242,7 +266,7 @@ def classify_ft_error(log_lines: list[str]) -> tuple[bool, str]:
     matched_blocks: list[str] = []
     seen_keys: set[str] = set()
 
-    for block in blocks:
+    for block_idx, block in enumerate(blocks):
         full_text = "\n".join(block)
 
         # Hard skip: external / network errors
@@ -253,6 +277,14 @@ def classify_ft_error(log_lines: list[str]) -> tuple[bool, str]:
 
         if not _block_is_strategy_error(block, full_text):
             continue
+
+        # "Impossible to load Strategy" is just a summary line — the actual
+        # cause (e.g. "name 'Decimal' is not defined") is in the preceding
+        # WARNING/ERROR block. Prepend it to give the LLM the real error.
+        if "Impossible to load Strategy" in full_text and block_idx > 0:
+            prev = "\n".join(blocks[block_idx - 1])
+            if any(kw in prev for kw in ("WARNING", "ERROR", "Could not import")):
+                full_text = prev + "\n" + full_text
 
         # Deduplicate: key on the exception line (or first error-pattern match)
         key_line = next(
@@ -279,7 +311,7 @@ def classify_ft_error(log_lines: list[str]) -> tuple[bool, str]:
 # FT Manager
 # ══════════════════════════════════════════════════════════════
 class FTManager:
-    _TAIL_LINES  = 200
+    _TAIL_LINES  = 500   # tracebacks can be 30-50 lines; 500 gives plenty of buffer
     _STARTUP_LOG = BASE_DIR / "logs" / "ft_startup.log"
 
     # ── Config patcher ────────────────────────────────────────

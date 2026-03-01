@@ -22,10 +22,45 @@ import re
 import time
 from typing import Optional
 
-from .utils import cfg, append_log, read_state
+from .utils import cfg, append_log, read_state, local_str, BASE_DIR
 
 logger = logging.getLogger("autoevolve.improver")
 IMPROVER_VERSION = "v3-two-step"
+
+
+def _llm_log(direction: str, provider: str, params: dict, content: str) -> None:
+    """
+    Write a single entry to logs/llm_conversations.log (rotating, max 10MB x 5).
+    direction: "REQUEST" or "RESPONSE"
+    params: dict of provider/model/temperature/etc
+    content: the full prompt or full response text
+    """
+    import logging.handlers as _lh
+    _log = logging.getLogger("autoevolve.llm_conversations")
+    if not _log.handlers:
+        log_dir = BASE_DIR / cfg("logging", "directory", default="logs")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        _h = _lh.RotatingFileHandler(
+            log_dir / "llm_conversations.log",
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5,
+            encoding="utf-8",
+        )
+        _h.setFormatter(logging.Formatter("%(message)s"))
+        _log.addHandler(_h)
+        _log.setLevel(logging.DEBUG)
+        _log.propagate = False   # don't pollute main log
+
+    sep = "=" * 80
+    meta_lines = [f"  {k}: {v}" for k, v in params.items() if v is not None]
+    entry = (
+        f"\n{sep}\n"
+        f"{local_str()} | {direction} | provider={provider}\n"
+        + "\n".join(meta_lines) + "\n"
+        f"{sep}\n"
+        f"{content}\n"
+    )
+    _log.debug(entry)
 
 # ══════════════════════════════════════════════════════════════
 # Prompts
@@ -68,7 +103,7 @@ EXPLORATION MODE: {mode}
 """
 
 _CODE_SYSTEM = """\
-You are an expert FreqTrade strategy developer for cryptocurrency futures (Bybit USDT perpetuals).
+You are the best Python programmer with deep knowledge of the FreqTrade platform, cryptocurrency futures markets, and quantitative trading strategies. You use all resources and techniques available for writing high-quality, production-grade Python code.
 
 STRICT RULES:
 1. Return ONLY valid Python — no markdown fences, no prose outside comments.
@@ -77,7 +112,12 @@ STRICT RULES:
 4. Zero lookahead bias — signals use only data available at candle close.
 5. Preserve ALL method signatures: populate_indicators, populate_entry_trend,
    populate_exit_trend, custom_stoploss, leverage, custom_exit, confirm_trade_entry.
-6. Allowed imports: talib, pandas, numpy, scipy, standard FreqTrade imports only.
+6. Allowed imports: talib, pandas, numpy, scipy, and Python stdlib (logging, datetime,
+   collections, typing, math, statistics, etc.) — use freely.
+   For FreqTrade imports: use ONLY imports you can verify exist in the FreqTrade source
+   code or official documentation. Do NOT guess or invent import paths — if unsure
+   whether a FreqTrade symbol exists, do not import it.
+   Extra imports enabled by the operator: {extra_imports}
 7. FORBIDDEN DataProvider calls — these do NOT exist and will crash FT:
    self.dp.market_pair_list, self.dp.get_pair_dataframe_with_candles,
    self.dp.get_analyzed_dataframe_between, self.dp.get_all_pair_dataframes.
@@ -287,10 +327,18 @@ class LLMImprover:
                 f"weakness={analysis.get('primary_weakness','?')[:80]}")
 
         # ── Step 2: Code ─────────────────────────────────────
+        # Extra imports allowed by the user in config
+        extra_imports_list = cfg("llm", "extra_allowed_imports", default=[]) or []
+        if isinstance(extra_imports_list, list) and extra_imports_list:
+            extra_imports_str = ", ".join(extra_imports_list)
+        else:
+            extra_imports_str = "none beyond the above"
+
         code_system = _CODE_SYSTEM.format(
-            strategy_name = sname,
-            gen           = gen,
-            reason        = reason,
+            strategy_name  = sname,
+            gen            = gen,
+            reason         = reason,
+            extra_imports  = extra_imports_str,
             pf = targets.get("profit_factor", 1.8),
             sh = targets.get("sharpe_ratio",  1.5),
             wr = targets.get("win_rate",      0.52),
@@ -384,13 +432,40 @@ class LLMImprover:
 
     # ── HTTP call (shared) ────────────────────────────────────
     def _call(self, provider: str, system: str, user: str) -> str:
+        # ── Gather config params for logging ─────────────────────
+        c = cfg("llm", provider, default={})
+        log_params = {
+            "model":       c.get("model", "?"),
+            "max_tokens":  c.get("max_tokens", "?"),
+            "temperature": c.get("temperature", "n/a" if provider in ("anthropic", "ollama") else 0.6),
+            "timeout":     cfg("llm", "timeout", default=600),
+        }
+        if provider == "openrouter":
+            log_params["allow_fallbacks"]      = c.get("allow_fallbacks", True)
+            log_params["max_price_prompt"]      = c.get("max_price_prompt", 0.10)
+            log_params["max_price_completion"]  = c.get("max_price_completion", 0.40)
+            log_params["sort"]                  = c.get("sort", "price")
+
+        _llm_log("REQUEST", provider, log_params,
+                 f"--- SYSTEM ---\n{system}\n--- USER ---\n{user}")
+
+        t0 = time.time()
         if provider == "anthropic":
-            return self._anthropic(system, user)
-        if provider == "ollama":
-            return self._ollama(system, user)
-        # Any other name (openai, openrouter, chutes, or any custom provider)
-        # is treated as OpenAI-compatible REST — requires base_url + api_key in config.
-        return self._openai_compat(provider, system, user)
+            response = self._anthropic(system, user)
+        elif provider == "ollama":
+            response = self._ollama(system, user)
+        else:
+            # Any other name treated as OpenAI-compatible REST
+            response = self._openai_compat(provider, system, user)
+
+        elapsed = round(time.time() - t0, 1)
+        # Try to read model actually used from response (openrouter may route elsewhere)
+        actual_model = getattr(self, "_last_actual_model", None)
+        resp_params = {"elapsed_sec": elapsed, "chars": len(response)}
+        if actual_model and actual_model != c.get("model"):
+            resp_params["actual_model_used"] = actual_model   # OpenRouter routed elsewhere
+        _llm_log("RESPONSE", provider, resp_params, response)
+        return response
 
     def _anthropic(self, system: str, user: str) -> str:
         try:
@@ -478,9 +553,13 @@ class LLMImprover:
         data  = r.json()
         text  = data["choices"][0]["message"]["content"]
         usage = data.get("usage", {})
+        # Capture the model actually used (OpenRouter may route to a different model)
+        actual_model = data.get("model", model)
+        self._last_actual_model = actual_model   # expose for RESPONSE log in _call
+        routed_note = f" (routed → {actual_model})" if actual_model != model else ""
         append_log("INFO",
             f"LLM OK: in={usage.get('prompt_tokens','?')} "
-            f"out={usage.get('completion_tokens','?')} tokens")
+            f"out={usage.get('completion_tokens','?')} tokens{routed_note}")
         return text
 
     def _ollama(self, system: str, user: str) -> str:
@@ -520,6 +599,52 @@ class LLMImprover:
 
         # Normalize line endings
         code = code.replace('\r\n', '\n').replace('\r', '\n')
+
+
+        # ── Auto-inject missing imports ───────────────────────────
+        # The LLM sometimes uses stdlib names without importing them.
+        # We detect usage and inject the import if it's absent.
+        _AUTO_IMPORTS = [
+            ("Decimal",     "from decimal import Decimal"),
+            ("dataclass",   "from dataclasses import dataclass, field"),
+            ("field",       "from dataclasses import dataclass, field"),
+            ("Optional",    "from typing import Optional, List, Dict, Tuple"),
+            ("List",        "from typing import Optional, List, Dict, Tuple"),
+            ("Dict",        "from typing import Optional, List, Dict, Tuple"),
+            ("Tuple",       "from typing import Optional, List, Dict, Tuple"),
+            ("Union",       "from typing import Union"),
+            ("Any",         "from typing import Any"),
+            ("Callable",    "from typing import Callable"),
+            ("defaultdict", "from collections import defaultdict"),
+            ("deque",       "from collections import deque"),
+            ("datetime",    "from datetime import datetime, timezone, timedelta"),
+            ("timezone",    "from datetime import datetime, timezone, timedelta"),
+            ("timedelta",   "from datetime import datetime, timezone, timedelta"),
+            ("math",        "import math"),
+            ("statistics",  "import statistics"),
+        ]
+        _header = "\n".join(code.split("\n")[:80])
+        _to_inject = []
+        _seen_lines = set()
+        for _nm, _imp in _AUTO_IMPORTS:
+            if _imp in _seen_lines:
+                continue
+            if _imp in _header:
+                _seen_lines.add(_imp)
+                continue
+            if re.search(r'\b' + _nm + r'\b', code):
+                _to_inject.append(_imp)
+                _seen_lines.add(_imp)
+        if _to_inject:
+            _lines = code.split("\n")
+            _insert_at = 0
+            for _i, _ln in enumerate(_lines[:80]):
+                _s = _ln.strip()
+                if _s.startswith("import ") or _s.startswith("from "):
+                    _insert_at = _i + 1
+            for _imp in reversed(_to_inject):
+                _lines.insert(_insert_at, _imp)
+            code = "\n".join(_lines)
 
         # Replace Unicode whitespace look-alikes with plain ASCII space/nothing.
         # LLMs often emit NBSP, NNBSP, thin-space etc. in comments/strings.

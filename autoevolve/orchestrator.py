@@ -138,7 +138,8 @@ class Orchestrator:
         _snap_always = self.harvester.snapshot()
         write_state({
             "total_trades":  _snap_always.get("total_closed", 0),
-            "open_trades":   _snap_always.get("total_open", 0),
+            "open_trades":      _snap_always.get("total_open", 0),
+            "open_trades_list": _snap_always.get("open_list", []),
             "metrics":       _snap_always.get("metrics", {}),
             "recent_trades": _snap_always.get("recent", []),
             "snapshot_at":   local_str(),
