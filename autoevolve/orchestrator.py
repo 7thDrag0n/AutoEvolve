@@ -281,6 +281,62 @@ class Orchestrator:
                 "idle_trigger_ready": False,
             }})
 
+        # ── Drawdown trigger — runs independently of trade gate ─
+        # Uses total equity (closed PnL + open unrealized) so it catches
+        # drawdowns from open losing positions immediately.
+        metrics = snap.get("metrics", {})
+        open_profits = self.deployer.ft.api_open_trade_profits()
+        unrealized   = sum(t.get("profit_abs", 0) for t in open_profits) if open_profits else 0.0
+        closed_pnl   = float(metrics.get("current_pnl") or 0.0)
+        equity_pnl   = round(closed_pnl + unrealized, 4)
+
+        # Update peak equity (session-persistent)
+        if not hasattr(self, "_peak_equity"):
+            self._peak_equity = equity_pnl
+        if equity_pnl > self._peak_equity:
+            self._peak_equity = equity_pnl
+        peak_equity = self._peak_equity
+
+        # Drawdown percent from peak
+        if peak_equity > 0 and equity_pnl < peak_equity:
+            equity_dd_pct = round((peak_equity - equity_pnl) / peak_equity * 100, 2)
+        else:
+            equity_dd_pct = 0.0
+
+        if dd_pct > 0:
+            _dd_status = {
+                "dd_threshold_pct": dd_pct,
+                "dd_current_pnl":   equity_pnl,
+                "dd_peak_pnl":      round(peak_equity, 4),
+                "dd_current_pct":   equity_dd_pct if peak_equity > 0 else None,
+                "trades_min":       dd_min,
+            }
+            if total < dd_min:
+                _dd_status["dd_current_pct"] = None   # not enough trades for reliable peak
+            _dd_status["dd_trigger_ready"] = (
+                total >= dd_min and
+                equity_dd_pct >= dd_pct and
+                cooldown_remaining == 0
+            )
+            write_state({"trigger_status": {
+                **read_state().get("trigger_status", {}),
+                **_dd_status,
+            }})
+
+            if total >= dd_min and equity_dd_pct >= dd_pct and not _in_cooldown():
+                reason = f"profit_drawdown_{equity_dd_pct:.1f}pct_from_peak"
+                msg = (f"TRIGGER: equity drawdown {equity_dd_pct:.1f}% from peak "
+                       f"(peak={peak_equity:.4f} equity={equity_pnl:.4f} threshold={dd_pct}%) "
+                       f"-> evolving gen {self._current_gen} -> {self._current_gen + 1}")
+                logger.warning(msg); append_log("WARNING", msg)
+                self.journal.record(EV_TRIGGERED, self._current_gen, {
+                    "reason": reason, "equity_dd_pct": equity_dd_pct,
+                    "peak_equity": peak_equity, "equity_pnl": equity_pnl,
+                    "metrics": snap.get("metrics", {}),
+                })
+                self._evolve(snap, reason)
+                return
+
         # ── Loss trigger ────────────────────────────────────────
         if total < min_t:
             write_state({"waiting_for_trades": min_t - total})
@@ -301,67 +357,7 @@ class Orchestrator:
             self._evolve(snap, reason)
             return
 
-        # ── Enrich metrics with open trade unrealized PnL ──────
-        # Drawdown should account for unrealized losses on open trades,
-        # not just closed trade PnL.
-        open_profits = self.deployer.ft.api_open_trade_profits()
-        if open_profits:
-            unrealized = sum(t.get("profit_abs", 0) for t in open_profits)
-            current_pnl = metrics.get("current_pnl", 0.0) + unrealized
-            peak_pnl    = metrics.get("peak_pnl", 0.0)
-            # Recompute drawdown pct with open trades included
-            if peak_pnl > 0 and current_pnl < peak_pnl:
-                metrics = dict(metrics)
-                metrics["current_pnl"]      = round(current_pnl, 4)
-                metrics["pnl_drawdown_pct"] = round((peak_pnl - current_pnl) / peak_pnl * 100, 2)
-
-        # ── Profit drawdown trigger ──────────────────────────────
-        if dd_pct > 0 and total >= dd_min:
-            metrics          = snap.get("metrics", {})
-            pnl_drawdown_pct = metrics.get("pnl_drawdown_pct", 0.0)
-            peak_pnl         = metrics.get("peak_pnl",         0.0)
-            current_pnl      = metrics.get("current_pnl",      0.0)
-
-            write_state({"trigger_status": {
-                **read_state().get("trigger_status", {}),
-                "dd_current_pct":  round(pnl_drawdown_pct, 2),
-                "dd_threshold_pct": dd_pct,
-                "dd_peak_pnl":     round(peak_pnl, 4),
-                "dd_current_pnl":  round(current_pnl, 4),
-                "dd_trigger_ready": pnl_drawdown_pct >= dd_pct,
-            }})
-
-            if pnl_drawdown_pct >= dd_pct:
-                reason = f"profit_drawdown_{pnl_drawdown_pct:.1f}pct_from_peak"
-                msg = (f"TRIGGER: profit drawdown {pnl_drawdown_pct:.1f}% from peak "
-                       f"(peak={peak_pnl:.4f} current={current_pnl:.4f} threshold={dd_pct}%) "
-                       f"-> evolving gen {self._current_gen} -> {self._current_gen + 1}")
-                logger.warning(msg); append_log("WARNING", msg)
-                self.journal.record(EV_TRIGGERED, self._current_gen,
-                                    {"reason": reason,
-                                     "pnl_drawdown_pct": pnl_drawdown_pct,
-                                     "peak_pnl": peak_pnl,
-                                     "current_pnl": current_pnl,
-                                     "metrics": metrics})
-                self._evolve(snap, reason)
-                return
-        else:
-            # Still write current PnL so dashboard can show equity even while waiting
-            _m   = snap.get("metrics", {})
-            _cur = _m.get("current_pnl", 0.0)
-            # Add unrealized open PnL here too
-            _open_p = self.deployer.ft.api_open_trade_profits()
-            if _open_p:
-                _cur = round(_cur + sum(t.get("profit_abs", 0) for t in _open_p), 4)
-            write_state({"trigger_status": {
-                **read_state().get("trigger_status", {}),
-                "dd_current_pct":   None,
-                "dd_threshold_pct": dd_pct,
-                "dd_current_pnl":   round(_cur, 4),
-                "dd_peak_pnl":      None,
-                "dd_trigger_ready": False,
-                "trades_min":       dd_min,
-            }})
+        # (drawdown trigger now runs earlier, before trade gate)
 
     # ── Strategy error handler (called from ft_monitor.py too) ─
     def _handle_strategy_error(self, excerpt: str, crashed: bool = False) -> None:
@@ -502,6 +498,12 @@ class Orchestrator:
         return open_list
 
     def _evolve(self, snap: dict, reason: str) -> None:
+        # Snapshot metrics right now — before DB wipe clears the data.
+        # This ensures checkpoint records the actual performance that caused the trigger.
+        fresh = self.harvester.snapshot()
+        if fresh.get("metrics"):
+            snap = dict(snap)
+            snap["metrics"] = fresh["metrics"]
         if self._evolving:
             append_log("WARNING", "Evolution already in progress — skipping")
             return
@@ -542,8 +544,11 @@ class Orchestrator:
             write_state({"status": "running"})
             return
 
-        changelog = self._extract_changelog(new_code)
-        deployed  = self.deployer.deploy(new_code, new_gen, snap, reason, changelog)
+        changelog   = self._extract_changelog(new_code)
+        llm_model   = getattr(self.improver, "last_used_model",    "unknown")
+        llm_provider= getattr(self.improver, "last_used_provider",  "unknown")
+        deployed    = self.deployer.deploy(new_code, new_gen, snap, reason, changelog,
+                                           llm_model=llm_model, llm_provider=llm_provider)
 
         if deployed:
             # Reset DB so fresh gen starts with clean trade history

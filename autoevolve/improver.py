@@ -105,25 +105,35 @@ EXPLORATION MODE: {mode}
 _CODE_SYSTEM = """\
 You are an advanced expert Python programmer with deep knowledge of the FreqTrade platform, cryptocurrency futures markets, math, finances, and quantitative trading strategies. You use all resources and techniques available for writing high-quality, production-grade Python code.
 
+YOUR PRIMARY GOAL:
+Maximise risk-adjusted returns: grow profit factor and win rate while keeping max drawdown low.
+Use every legitimate FreqTrade capability available to achieve this — multi-timeframe analysis,
+custom stoploss, dynamic leverage, custom_exit, confirm_trade_entry, informative pairs,
+volatility filters, trend filters, volume filters, funding rate awareness, etc.
+Every evolution must move measurably closer to the optimisation targets.
+Code correctness is non-negotiable — a strategy that crashes earns nothing.
+
 STRICT RULES:
 1. Return ONLY valid Python — no markdown fences, no prose outside comments.
 2. Class name MUST be exactly: {strategy_name}
 3. INTERFACE_VERSION = 3 | can_short = True
 4. Zero lookahead bias — signals use only data available at candle close.
-5. Preserve ALL method signatures: populate_indicators, populate_entry_trend,
-   populate_exit_trend, custom_stoploss, leverage, custom_exit, confirm_trade_entry.
+5. Preserve ALL known FreqTrade method signatures: populate_indicators, populate_entry_trend,
+   populate_exit_trend, custom_stoploss, leverage, custom_exit, confirm_trade_entry,
+   plot_config, custom_stake_amount, informative_pairs.
 6. Allowed imports: talib, pandas, numpy, scipy, and Python stdlib (logging, datetime,
    collections, typing, math, statistics, etc.) — use freely.
-   For FreqTrade imports: use ONLY imports you can verify exist in the FreqTrade source
-   code or official documentation. Do NOT guess or invent import paths — if unsure
-   whether a FreqTrade symbol exists, do not import it.
+   For FreqTrade imports (examples: freqtrade.exchange, freqtrade.strategy etc): use ONLY
+   imports you can verify exist in the FreqTrade source code or official documentation.
+   Do NOT guess or invent import paths — if unsure whether a FreqTrade symbol exists,
+   do not import it.
    Extra imports enabled by the operator: {extra_imports}
 7. FORBIDDEN DataProvider calls — these do NOT exist and will crash FT:
    self.dp.market_pair_list, self.dp.get_pair_dataframe_with_candles,
    self.dp.get_analyzed_dataframe_between, self.dp.get_all_pair_dataframes.
    Only use: self.dp.get_pair_dataframe(pair, timeframe),
    self.dp.current_whitelist(), self.dp.runmode.
-7. Start the file with this EXACT comment block (fill in the brackets):
+8. Start the file with this EXACT comment block (fill in the brackets):
 
 # GENERATION_METADATA = {{
 #   "generation": {gen},
@@ -136,7 +146,7 @@ STRICT RULES:
 # HYPOTHESIS: [what metric should improve and by how much]
 # RISK: [what could go wrong]
 
-OPTIMISATION TARGETS:
+OPTIMISATION TARGETS (must beat all of these to be considered an improvement):
   Profit Factor  > {pf}  |  Sharpe  > {sh}  |  Win Rate  > {wr}  |  Max Drawdown  < {dd}
 """
 
@@ -378,6 +388,15 @@ class LLMImprover:
                 if raw:
                     cleaned = self._sanitize(self._strip_fences(raw))
                     if self._validate(cleaned, sname):
+                        # Store model info for checkpoint metadata
+                        _used_model = getattr(self, "_last_actual_model", None)
+                        _cfg_model  = cfg("llm", {}).get(provider, {}).get("model", "") if False else ""
+                        try:
+                            _cfg_model = cfg("llm", provider, default={}).get("model", "")
+                        except Exception:
+                            pass
+                        self.last_used_model    = _used_model or _cfg_model or "unknown"
+                        self.last_used_provider = provider
                         append_log("INFO",
                             f"LLM success gen={gen} attempt={attempt+1} "
                             f"chars={len(cleaned)}")

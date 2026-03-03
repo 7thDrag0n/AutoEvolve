@@ -560,35 +560,33 @@ function renderTriggers() {
     rows.push(row('Idle trigger', 'disabled', 'trig-dim'));
   }
 
-  // Profit drawdown trigger
-  const ddCur   = ts.dd_current_pct;
+  // Profit drawdown trigger (equity = closed PnL + open unrealized)
+  const ddCur    = ts.dd_current_pct;      // null until dd_min trades reached
   const ddThresh = ts.dd_threshold_pct || 0;
+  const ddPnl    = ts.dd_current_pnl;
+  const ddPeak   = ts.dd_peak_pnl;
   if (ddThresh > 0) {
+    const pnlSign = ddPnl != null && ddPnl >= 0 ? '+' : '';
+    const pnlStr  = ddPnl != null ? `equity ${pnlSign}${ddPnl.toFixed(4)} USDT` : '';
+    const peakStr = ddPeak != null && ddPeak > 0 ? `  peak ${ddPeak.toFixed(4)}` : '';
+
     if (ddCur == null) {
-      const _waitPnl = ts.dd_current_pnl != null ? ts.dd_current_pnl : null;
-      const _pnlSign = _waitPnl != null && _waitPnl >= 0 ? '+' : '';
-      const _pnlCls  = _waitPnl == null ? '' : _waitPnl >= 0 ? 'trig-ok' : 'trig-warn';
-      const _pnlStr  = _waitPnl != null
-        ? `  ·  equity ${_pnlSign}${_waitPnl.toFixed(4)} USDT`
-        : '';
-      // Show how far along the drawdown threshold we are even while waiting
-      const _ddThPct = ts.dd_threshold_pct || 0;
-      let _ddProg = '';
-      if (_waitPnl != null && ts.dd_peak_pnl != null && ts.dd_peak_pnl > 0) {
-        const _ddCurPct = (ts.dd_peak_pnl - _waitPnl) / ts.dd_peak_pnl * 100;
-        _ddProg = `  ·  dd ${_ddCurPct.toFixed(1)}% / ${_ddThPct}%`;
+      // Not enough trades yet — show equity + how far into threshold we already are
+      let ddProgStr = '';
+      if (ddPnl != null && ddPeak != null && ddPeak > 0) {
+        const ddNow = (ddPeak - ddPnl) / ddPeak * 100;
+        const ddPnlCls = ddNow >= ddThresh * 0.7 ? 'trig-warn' : '';
+        ddProgStr = `  ·  dd ${ddNow.toFixed(1)}% / ${ddThresh}%`;
       }
+      const pnlCls = ddPnl != null && ddPnl < 0 ? 'trig-warn' : 'trig-dim';
       rows.push(row('Profit drawdown',
-        `waiting for ${ts.trades_min||0} trades${_pnlStr}${_ddProg}`,
-        _pnlCls || 'trig-dim'));
+        `waiting for ${ts.trades_min||0} trades  ·  ${pnlStr}${ddProgStr}`,
+        pnlCls));
     } else {
       const ddFill = Math.min(ddCur / ddThresh, 1);
       const ddCls  = ddFill >= 1 ? 'trig-hot' : ddFill >= 0.7 ? 'trig-warn' : 'trig-ok';
-      const peak   = ts.dd_peak_pnl   != null ? ts.dd_peak_pnl.toFixed(4)   : '—';
-      const cur    = ts.dd_current_pnl != null ? ts.dd_current_pnl.toFixed(4): '—';
-      const curSign = ts.dd_current_pnl != null && ts.dd_current_pnl >= 0 ? '+' : '';
       rows.push(row('Profit drawdown',
-        `${ddCur.toFixed(1)}% / ${ddThresh}%  ·  equity ${curSign}${cur} USDT  (peak ${peak})`,
+        `${ddCur.toFixed(1)}% / ${ddThresh}%  ·  ${pnlStr}${peakStr}`,
         ddCls));
     }
   } else {
@@ -914,10 +912,13 @@ function renderCheckpoints() {
     const isCur = c.generation === gen;
     return `<div class="ckpt ${isCur?'current':''}">
       <div class="ckpt-gen">Gen ${c.generation}${isCur?' ← current':''}</div>
-      <div class="ckpt-row">PF: ${ms.profit_factor??'—'}</div>
-      <div class="ckpt-row">WR: ${ms.win_rate??'—'}</div>
-      <div class="ckpt-row">DD: ${ms.max_drawdown??'—'}</div>
-      <div class="ckpt-row" style="color:#1e3050">${(c.created_at||'').slice(0,16)}</div>
+      <div class="ckpt-row">PF: ${ms.profit_factor != null ? ms.profit_factor.toFixed(2) : '—'}</div>
+      <div class="ckpt-row">WR: ${ms.win_rate != null ? (ms.win_rate*100).toFixed(1)+'%' : '—'}</div>
+      <div class="ckpt-row">DD: ${ms.max_drawdown != null ? (ms.max_drawdown*100).toFixed(1)+'%' : '—'}</div>
+      <div class="ckpt-row" style="color:var(--muted)">${(c.created_at||'').slice(0,16)}</div>
+      <div class="ckpt-row" style="color:var(--muted);font-size:.6rem" title="${esc(c.llm_model||'')}">
+        ${esc(c.llm_provider||'—')} · ${esc((c.llm_model||'—').split('/').pop().slice(0,30))}
+      </div>
       <div class="ckpt-row" style="color:#2d4060;margin-top:3px;font-size:.62rem">${esc((c.changelog||'').slice(0,60))}</div>
     </div>`;
   }).join('');

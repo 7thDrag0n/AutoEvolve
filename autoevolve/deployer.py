@@ -44,7 +44,8 @@ class CheckpointManager:
         self._dir.mkdir(parents=True, exist_ok=True)
 
     def save(self, gen: int, code: str, metrics: dict,
-             reason: str, changelog: str = "") -> Path:
+             reason: str, changelog: str = "",
+             llm_model: str = "unknown", llm_provider: str = "unknown") -> Path:
         self._refresh()
         d = self._dir / f"gen_{gen:04d}"
         d.mkdir(exist_ok=True)
@@ -55,6 +56,8 @@ class CheckpointManager:
             "created_at":      local_str(),
             "trigger_reason":  reason,
             "changelog":       changelog,
+            "llm_model":       llm_model,
+            "llm_provider":    llm_provider,
             "metrics_summary": {
                 k: metrics.get("metrics", {}).get(k)
                 for k in ["win_rate", "profit_factor", "sharpe", "max_drawdown"]
@@ -970,9 +973,11 @@ class Deployer:
         self.ft = FTManager()
 
     def deploy(self, code: str, gen: int, metrics: dict,
-               reason: str, changelog: str) -> bool:
+               reason: str, changelog: str,
+               llm_model: str = "unknown", llm_provider: str = "unknown") -> bool:
         code = self._inject_meta(code, gen, gen - 1, reason, metrics, changelog)
-        self.cp.save(gen, code, metrics, reason, changelog)
+        self.cp.save(gen, code, metrics, reason, changelog,
+                     llm_model=llm_model, llm_provider=llm_provider)
 
         sname = cfg("freqtrade", "strategy_name", default="AutoEvolveStrategy")
         dest  = Path(cfg("freqtrade", "strategies_dir", default="")).expanduser()
