@@ -223,14 +223,14 @@ llm:
   # ── Anthropic (Claude) ───────────────────────────────────────
   anthropic:
     model:       "claude-opus-4-6"  # or claude-sonnet-4-6 for lower cost
-    api_key_env: "ANTHROPIC_API_KEY"  # name of the environment variable holding your key
+    api_key: "ANTHROPIC_API_KEY"  # name of the environment variable holding your key
     max_tokens:  16384
     # Note: temperature and provider routing are not used for Anthropic (native SDK)
 
   # ── OpenAI ───────────────────────────────────────────────────
   openai:
     model:       "gpt-4o"
-    api_key_env: "OPENAI_API_KEY"
+    api_key: "OPENAI_API_KEY"
     max_tokens:  16384
     temperature: 0.6             # 0.0 = deterministic, 1.0 = creative. 0.6 recommended.
 
@@ -238,7 +238,7 @@ llm:
   # Access hundreds of models through one API. See https://openrouter.ai/models
   openrouter:
     model:       "anthropic/claude-opus-4-6"  # any slug from openrouter.ai/models
-    api_key_env: "OPENROUTER_API_KEY"
+    api_key: "OPENROUTER_API_KEY"
     base_url:    "https://openrouter.ai/api/v1"
     site_url:    ""               # optional: your site URL sent as HTTP-Referer
     site_name:   "AutoEvolve"    # optional: your app name sent as X-Title
@@ -254,7 +254,7 @@ llm:
   chutes:
     model:       "deepseek-ai/DeepSeek-R1"
     api_key:     ""              # paste API key here, OR set api_key_env below
-    api_key_env: "CHUTES_API_KEY"
+    api_key: "CHUTES_API_KEY"
     base_url:    "https://llm.chutes.ai/v1"
     max_tokens:  16384
     temperature: 0.6
