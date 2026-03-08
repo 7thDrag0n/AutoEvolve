@@ -101,7 +101,10 @@ evolution:
     - "partial_exit_scaling"        # Scale out in tranches (50% at 1R, trail the rest)
     - "regime_filter"               # Detect trending vs ranging, adapt strategy mode
     - "candlestick_patterns"        # Engulfing, pin bar, inside bar, hammer at S/R
-
+    # - "volatility_of_volatility_risk_premium"
+    # - "tail_risk_premium"
+    # - "fisher_transform"
+    # - "fibonacci_trading"
 
 # ── Evolution Triggers ────────────────────────────────────────
 # Conditions that cause AutoEvolve to start a new evolution cycle.
@@ -219,6 +222,19 @@ llm:
   # Trim the prompt if it exceeds this many tokens (~4 chars/token).
   # Prevents oversized context from exhausting provider limits.
   max_prompt_tokens: 50000
+
+  # Extra imports the LLM is allowed to use, beyond the verified FreqTrade
+  # standard imports already built into the system prompt.
+  # Use this for third-party libraries or non-standard paths you want enabled.
+  # Leave empty to use only the built-in verified list.
+  # Example: add "ta" if you have the 'ta' library installed alongside talib.
+  # Trade history sent to the LLM with each evolution.
+  # The LLM uses entry_tag, exit_reason, profit%, duration to spot patterns.
+  # Duration is in minutes — more interpretable than candles for the LLM.
+  # Set include_trade_history: false or trade_history_count: 0 to disable
+  # (useful if token budget is tight or trade base is huge).
+  include_trade_history: true
+  trade_history_count:   50   # max number of recent closed trades to include
 
   # ── Anthropic (Claude) ───────────────────────────────────────
   anthropic:
