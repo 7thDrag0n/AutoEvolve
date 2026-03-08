@@ -245,7 +245,7 @@ def _trim_code(code: str, max_chars: int = 7000) -> str:
     return "\n".join(head + [f"    # ... {mid} lines truncated ..."] + tail)
 
 
-def _trim_perf(perf: dict, max_chars: int = 2500) -> str:
+def _trim_perf(perf: dict, max_chars: int = 4000) -> str:
     m = perf.get("metrics", {})
     # Include top 5 worst pairs by total pnl
     pair_stats = m.get("pair_stats") or perf.get("metrics", {}).get("pair_stats", {})
@@ -253,6 +253,26 @@ def _trim_perf(perf: dict, max_chars: int = 2500) -> str:
     if isinstance(pair_stats, dict):
         sorted_pairs = sorted(pair_stats.items(), key=lambda x: x[1].get("total", 0))
         worst_pairs = dict(sorted_pairs[:5])
+
+    # Trade history — controlled by config flag and count limit
+    include_trades = cfg("llm", "include_trade_history", default=True)
+    max_trades     = cfg("llm", "trade_history_count",   default=20)
+    recent_trades  = []
+    if include_trades and max_trades > 0:
+        all_recent = perf.get("recent", [])
+        for t in all_recent[-max_trades:]:
+            # Compact format: only what the LLM needs to analyse patterns
+            recent_trades.append({
+                "pair":       t.get("pair", ""),
+                "dir":        "short" if t.get("is_short") else "long",
+                "lev":        t.get("leverage", 1),
+                "pct":        t.get("profit_pct"),    # already in percent e.g. 1.23
+                "abs":        t.get("profit_abs"),
+                "dur_min":    t.get("duration_min"),
+                "entry":      t.get("enter_tag", ""),
+                "exit":       t.get("exit_reason", ""),
+                "sl_pct":     t.get("stop_loss_pct"),
+            })
 
     slim = {
         "total_closed":       perf.get("total_closed"),
@@ -268,8 +288,9 @@ def _trim_perf(perf: dict, max_chars: int = 2500) -> str:
         "exit_reasons": m.get("exit_reasons", {}),
         "worst_5_pairs": worst_pairs,
         "patterns":      perf.get("patterns", {}),
-        "recent_5":      perf.get("recent", [])[-5:],
     }
+    if recent_trades:
+        slim["trades"] = recent_trades   # replaces old "recent_5"
     if "ft_error_context" in perf:
         slim["ft_error_context"] = perf["ft_error_context"]
     text = json.dumps(slim, indent=2)
