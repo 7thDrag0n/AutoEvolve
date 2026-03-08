@@ -553,24 +553,63 @@ class Orchestrator:
         if deployed:
             # Reset DB so fresh gen starts with clean trade history
             self.ft.reset_database()
-            # Reset the session timestamp so consecutive_losses only counts
+
+            now = local_str()
+
+            # Reset session timestamp so consecutive_losses only counts
             # trades closed after the DB wipe — not the now-deleted history
-            write_state({"ft_started_at": local_str()})
-            self._current_gen    = new_gen
-            self._deploy_at      = local_str()
-            self._monitoring     = True
-            self._fix_attempts   = 0
-            self._last_error_sig = ""
+            write_state({"ft_started_at": now})
+
+            # Reset all in-memory trigger state so nothing carries over from pre-wipe
+            self._current_gen     = new_gen
+            self._deploy_at       = now
+            self._monitoring      = True
+            self._fix_attempts    = 0
+            self._last_error_sig  = ""
+            self._last_open_trade = datetime.now().astimezone()  # idle clock starts fresh
+            self._peak_equity     = 0.0   # equity peak resets — old peak is meaningless
+
+            dd_pct  = cfg("trigger", "profit_drawdown_pct",        default=0)
+            dd_min  = cfg("trigger", "profit_drawdown_min_trades", default=5)
+            min_t   = cfg("trigger", "min_trades",                 default=10)
+            idle_min = cfg("trigger", "idle_trigger_minutes",      default=0)
+            cooldown = cfg("trigger", "cooldown_minutes",          default=60)
+
             write_state({
-                "status":         "monitoring",
-                "monitoring":      True,
-                "current_gen":     new_gen,
-                "deploy_at":       self._deploy_at,
-                "last_changelog":  changelog,
-                "evolving_to_gen": None,
-                "ft_error":        None,
-                "ft_error_full":   None,
-                "ft_error_count":  0,
+                "status":            "monitoring",
+                "monitoring":         True,
+                "current_gen":        new_gen,
+                "deploy_at":          self._deploy_at,
+                "last_changelog":     changelog,
+                "evolving_to_gen":    None,
+                "ft_error":           None,
+                "ft_error_full":      None,
+                "ft_error_count":     0,
+                "total_trades":       0,
+                "consecutive_losses": 0,
+                "waiting_for_trades": min_t,
+                # Reset trigger status panel to clean post-wipe values
+                "trigger_status": {
+                    "cooldown_remaining_min": cooldown,
+                    "cooldown_total_min":     cooldown,
+                    "loss_current":           0,
+                    "loss_threshold":         cfg("trigger", "loss_threshold", default=3),
+                    "trades_total":           0,
+                    "trades_needed":          min_t,
+                    "trades_min":             min_t,
+                    "in_cooldown":            True,
+                    "loss_trigger_ready":     False,
+                    "dd_threshold_pct":       dd_pct,
+                    "dd_min_trades":          dd_min,
+                    "dd_current_pct":         None,
+                    "dd_current_pnl":         0.0,
+                    "dd_peak_pnl":            0.0,
+                    "dd_trigger_ready":       False,
+                    "idle_threshold_min":     idle_min if idle_min > 0 else None,
+                    "idle_elapsed_min":       0.0,
+                    "idle_trigger_ready":     False,
+                    "slots_full":             False,
+                },
             })
             self.journal.record(EV_DEPLOYED, new_gen, {
                 "metrics":   snap.get("metrics", {}),
