@@ -560,33 +560,41 @@ function renderTriggers() {
     rows.push(row('Idle trigger', 'disabled', 'trig-dim'));
   }
 
-  // Profit drawdown trigger (equity = closed PnL + open unrealized)
-  const ddCur    = ts.dd_current_pct;      // null until dd_min trades reached
-  const ddThresh = ts.dd_threshold_pct || 0;
-  const ddPnl    = ts.dd_current_pnl;
-  const ddPeak   = ts.dd_peak_pnl;
-  if (ddThresh > 0) {
-    const pnlSign = ddPnl != null && ddPnl >= 0 ? '+' : '';
-    const pnlStr  = ddPnl != null ? `equity ${pnlSign}${ddPnl.toFixed(4)} USDT` : '';
-    const peakStr = ddPeak != null && ddPeak > 0 ? `  peak ${ddPeak.toFixed(4)}` : '';
+  // Profit drawdown trigger
+  // total_pnl = closed_pnl + open_pnl  ;  threshold = closed_pnl * (1 - dd_pct/100)
+  // fires when total_pnl < threshold
+  // display_pct = -open_pnl / closed_pnl * 100  (when closed > 0 and open < 0)
+  const ddThresh   = ts.dd_threshold_pct || 0;
+  const ddClosed   = ts.dd_closed_pnl;      // closed trades PnL (USDT)
+  const ddOpen     = ts.dd_open_pnl;        // open trades unrealized PnL (USDT)
+  const ddTotal    = ts.dd_total_pnl;       // closed + open
+  const ddFloor    = ts.dd_threshold_val;   // closed * (1 - dd_pct/100)
+  const ddDispPct  = ts.dd_display_pct;     // null until dd_min trades
 
-    if (ddCur == null) {
-      // Not enough trades yet — show equity + how far into threshold we already are
-      let ddProgStr = '';
-      if (ddPnl != null && ddPeak != null && ddPeak > 0) {
-        const ddNow = (ddPeak - ddPnl) / ddPeak * 100;
-        const ddPnlCls = ddNow >= ddThresh * 0.7 ? 'trig-warn' : '';
-        ddProgStr = `  ·  dd ${ddNow.toFixed(1)}% / ${ddThresh}%`;
-      }
-      const pnlCls = ddPnl != null && ddPnl < 0 ? 'trig-warn' : 'trig-dim';
+  if (ddThresh > 0) {
+    const fmt = v => v != null ? `${v >= 0 ? '+' : ''}${v.toFixed(4)}` : '—';
+    const closedStr = `closed ${fmt(ddClosed)}`;
+    const openStr   = `open ${fmt(ddOpen)}`;
+
+    if (ddDispPct == null) {
+      // Waiting for enough closed trades
       rows.push(row('Profit drawdown',
-        `waiting for ${ts.trades_min||0} trades  ·  ${pnlStr}${ddProgStr}`,
-        pnlCls));
+        `waiting for ${ts.trades_min||0} closed trades  ·  ${closedStr}  ·  ${openStr}`,
+        'trig-dim'));
     } else {
-      const ddFill = Math.min(ddCur / ddThresh, 1);
-      const ddCls  = ddFill >= 1 ? 'trig-hot' : ddFill >= 0.7 ? 'trig-warn' : 'trig-ok';
+      // Active — show display_pct vs threshold, plus USDT context
+      const triggered = ddTotal != null && ddFloor != null && ddTotal < ddFloor;
+      const ddFill  = ddClosed > 0 && ddOpen < 0 ? Math.min(ddDispPct / ddThresh, 1) : 0;
+      const ddCls   = triggered ? 'trig-hot'
+                    : ddFill >= 0.7 ? 'trig-warn'
+                    : 'trig-ok';
+      // pct display only meaningful when closed > 0
+      const pctStr  = ddClosed > 0 && ddOpen < 0
+        ? `${ddDispPct.toFixed(1)}% / ${ddThresh}%  ·  `
+        : '';
+      const totalStr = `total ${fmt(ddTotal)} / floor ${fmt(ddFloor)}`;
       rows.push(row('Profit drawdown',
-        `${ddCur.toFixed(1)}% / ${ddThresh}%  ·  ${pnlStr}${peakStr}`,
+        `${pctStr}${totalStr}  ·  ${closedStr}  ·  ${openStr}`,
         ddCls));
     }
   } else {

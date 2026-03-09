@@ -260,19 +260,25 @@ def _trim_perf(perf: dict, max_chars: int = 4000) -> str:
     recent_trades  = []
     if include_trades and max_trades > 0:
         all_recent = perf.get("recent", [])
+        # all_recent is already sorted oldest→newest (open_date asc) by harvester.
+        # Slice the last max_trades entries (most recent by open_date).
         for t in all_recent[-max_trades:]:
-            # Compact format: only what the LLM needs to analyse patterns
-            recent_trades.append({
+            entry = {
                 "pair":       t.get("pair", ""),
+                "open":       t.get("open", False),   # True = still open
                 "dir":        "short" if t.get("is_short") else "long",
                 "lev":        t.get("leverage", 1),
-                "pct":        t.get("profit_pct"),    # already in percent e.g. 1.23
-                "abs":        t.get("profit_abs"),
+                "pct":        t.get("profit_pct"),    # None for open trades
+                "abs":        t.get("profit_abs"),    # None for open trades
                 "dur_min":    t.get("duration_min"),
                 "entry":      t.get("enter_tag", ""),
-                "exit":       t.get("exit_reason", ""),
+                "exit":       t.get("exit_reason"),   # None for open trades
                 "sl_pct":     t.get("stop_loss_pct"),
-            })
+                "open_date":  t.get("open_date", ""),
+            }
+            if not t.get("open", False):
+                entry["close_date"] = t.get("close_date", "")
+            recent_trades.append(entry)
 
     slim = {
         "total_closed":       perf.get("total_closed"),

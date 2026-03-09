@@ -296,27 +296,55 @@ class Harvester:
         metrics = self._compute_metrics(closed)
 
         # Recent trades (last 20 closed) for LLM context
+        # All trades (closed + open) sorted by open_date ascending — LLM gets
+        # the last trade_history_count of these, sliced in improver.py.
+        # No cap here; improver controls the final count.
+        all_trades_sorted = df.sort_values("open_date", ascending=True)
         recent = []
-        for _, r in closed.tail(20).iterrows():
-            close_dt = str(r.get("close_date", ""))
-            # Format to readable short form: "Feb 27 18:04"
+        for _, r in all_trades_sorted.iterrows():
+            from datetime import datetime as _dt, timezone as _tz
+            is_open = bool(r.get("is_open", 0))
+            open_dt = str(r.get("open_date", ""))
             try:
-                from datetime import datetime as _dt
-                close_dt_fmt = _dt.fromisoformat(close_dt[:19]).strftime("%b %d %H:%M")
+                open_dt_fmt = _dt.fromisoformat(open_dt[:19]).strftime("%b %d %H:%M")
             except Exception:
-                close_dt_fmt = close_dt[:16]
+                open_dt_fmt = open_dt[:16]
+
+            if is_open:
+                # Duration so far for open trades
+                try:
+                    od = _dt.fromisoformat(open_dt[:19]).replace(tzinfo=_tz.utc)
+                    dur_min = round((_dt.now(_tz.utc) - od).total_seconds() / 60, 1)
+                except Exception:
+                    dur_min = 0.0
+                close_dt_fmt = None
+                profit_pct   = None   # not known yet for open trades
+                profit_abs   = None
+                exit_reason  = None
+            else:
+                close_dt = str(r.get("close_date", ""))
+                try:
+                    close_dt_fmt = _dt.fromisoformat(close_dt[:19]).strftime("%b %d %H:%M")
+                except Exception:
+                    close_dt_fmt = close_dt[:16]
+                dur_min     = round(float(r.get("trade_duration_min", 0)), 1)
+                profit_pct  = round(float(r.get("profit_ratio", 0)) * 100, 3)
+                profit_abs  = round(float(r.get("profit_abs", 0)), 4)
+                exit_reason = str(r.get("exit_reason", ""))
 
             recent.append({
                 "pair":         r.get("pair", ""),
+                "open":         is_open,
                 "is_short":     bool(r.get("is_short", 0)),
                 "leverage":     round(float(r.get("leverage") or 1.0), 1),
-                "profit_pct":   round(float(r.get("profit_ratio", 0)) * 100, 3),
-                "profit_abs":   round(float(r.get("profit_abs", 0)),  4),
+                "profit_pct":   profit_pct,
+                "profit_abs":   profit_abs,
                 "funding_fees": round(float(r.get("funding_fees", 0)), 4),
                 "enter_tag":    str(r.get("enter_tag", "")),
-                "exit_reason":  str(r.get("exit_reason", "")),
-                "duration_min": round(float(r.get("trade_duration_min", 0)), 1),
+                "exit_reason":  exit_reason,
+                "duration_min": dur_min,
                 "stop_loss_pct":round(float(r.get("stop_loss_pct", 0)) * 100, 2),
+                "open_date":    open_dt_fmt,
                 "close_date":   close_dt_fmt,
             })
 

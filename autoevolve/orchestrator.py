@@ -200,13 +200,15 @@ class Orchestrator:
                 "trades_min":             min_t,
                 "in_cooldown":            cooldown_remaining > 0,
                 "loss_trigger_ready":     total >= min_t and cooldown_remaining == 0,
-                "dd_threshold_pct":       dd_pct,
-                "dd_min_trades":          dd_min,
-                "idle_threshold_min":     idle_min if idle_min > 0 else None,
-                # Always show current PnL (closed + open unrealized) for the drawdown panel
-                "dd_current_pnl":         self._current_equity_pnl(snap),
-                "dd_current_pct_of_peak": None,   # not enough trades yet
-                "trades_min":             dd_min,
+                "dd_threshold_pct":  dd_pct,
+                "dd_min_trades":     dd_min,
+                "idle_threshold_min": idle_min if idle_min > 0 else None,
+                "dd_closed_pnl":     0.0,
+                "dd_open_pnl":       0.0,
+                "dd_total_pnl":      0.0,
+                "dd_threshold_val":  0.0,
+                "dd_display_pct":    None,
+                "trades_min":        dd_min,
             },
         })
 
@@ -281,57 +283,66 @@ class Orchestrator:
                 "idle_trigger_ready": False,
             }})
 
-        # ── Drawdown trigger — runs independently of trade gate ─
-        # Uses total equity (closed PnL + open unrealized) so it catches
-        # drawdowns from open losing positions immediately.
-        metrics = snap.get("metrics", {})
-        open_profits = self.deployer.ft.api_open_trade_profits()
-        unrealized   = sum(t.get("profit_abs", 0) for t in open_profits) if open_profits else 0.0
-        closed_pnl   = float(metrics.get("current_pnl") or 0.0)
-        equity_pnl   = round(closed_pnl + unrealized, 4)
-
-        # Update peak equity (session-persistent)
-        if not hasattr(self, "_peak_equity"):
-            self._peak_equity = equity_pnl
-        if equity_pnl > self._peak_equity:
-            self._peak_equity = equity_pnl
-        peak_equity = self._peak_equity
-
-        # Drawdown percent from peak
-        if peak_equity > 0 and equity_pnl < peak_equity:
-            equity_dd_pct = round((peak_equity - equity_pnl) / peak_equity * 100, 2)
-        else:
-            equity_dd_pct = 0.0
-
+        # ── Drawdown trigger ─────────────────────────────────────────────────
+        #
+        # Logic: compare total equity (closed PnL + open unrealized PnL) against
+        # a floor derived from closed PnL alone.
+        #
+        #   closed_pnl = sum(close_profit_abs) for all closed trades  [USDT]
+        #   open_pnl   = sum(profit_abs) for all open trades via /status [USDT]
+        #   total_pnl  = closed_pnl + open_pnl
+        #   threshold  = closed_pnl × (1 - dd_pct/100)
+        #   TRIGGER when: total_pnl < threshold
+        #
+        # Intuition: open losses must eat more than dd_pct% of closed profits to fire.
+        # Works correctly in all cases:
+        #   closed=+10, open=-6  → total=+4 < threshold=+5  → TRIGGER (50%)
+        #   closed=+10, open=-4  → total=+6 > threshold=+5  → no trigger
+        #   closed=+10, open=+6  → total=+16 > threshold=+5 → no trigger
+        #   closed=-10, open=+6  → total=-4 > threshold=-15 → no trigger
+        #   closed=-2,  open=-1  → total=-3 < threshold=-1  → TRIGGER
         if dd_pct > 0:
+            metrics      = snap.get("metrics", {})
+            closed_pnl   = round(float(metrics.get("current_pnl") or 0.0), 4)
+            open_profits = self.deployer.ft.api_open_trade_profits()
+            open_pnl     = round(sum(t.get("profit_abs", 0.0) for t in open_profits), 4)
+            total_pnl    = round(closed_pnl + open_pnl, 4)
+            threshold    = round(closed_pnl * (1 - dd_pct / 100.0), 4)
+
+            # Display pct: when closed > 0, show how much open losses eat into it.
+            # Formula: -open_pnl / closed_pnl * 100  (positive = losing ground)
+            if closed_pnl > 0 and open_pnl < 0:
+                dd_display_pct = round(-open_pnl / closed_pnl * 100, 2)
+            else:
+                dd_display_pct = 0.0
+
+            triggered = (total >= dd_min and total_pnl < threshold and cooldown_remaining == 0)
+
             _dd_status = {
                 "dd_threshold_pct": dd_pct,
-                "dd_current_pnl":   equity_pnl,
-                "dd_peak_pnl":      round(peak_equity, 4),
-                "dd_current_pct":   equity_dd_pct if peak_equity > 0 else None,
+                "dd_closed_pnl":    closed_pnl,
+                "dd_open_pnl":      open_pnl,
+                "dd_total_pnl":     total_pnl,
+                "dd_threshold_val": threshold,
+                "dd_display_pct":   dd_display_pct if total >= dd_min else None,
                 "trades_min":       dd_min,
+                "dd_trigger_ready": triggered,
             }
-            if total < dd_min:
-                _dd_status["dd_current_pct"] = None   # not enough trades for reliable peak
-            _dd_status["dd_trigger_ready"] = (
-                total >= dd_min and
-                equity_dd_pct >= dd_pct and
-                cooldown_remaining == 0
-            )
             write_state({"trigger_status": {
                 **read_state().get("trigger_status", {}),
                 **_dd_status,
             }})
 
-            if total >= dd_min and equity_dd_pct >= dd_pct and not _in_cooldown():
-                reason = f"profit_drawdown_{equity_dd_pct:.1f}pct_from_peak"
-                msg = (f"TRIGGER: equity drawdown {equity_dd_pct:.1f}% from peak "
-                       f"(peak={peak_equity:.4f} equity={equity_pnl:.4f} threshold={dd_pct}%) "
+            if total >= dd_min and total_pnl < threshold and not _in_cooldown():
+                reason = f"profit_drawdown_open_erased_{dd_pct}pct_of_closed"
+                msg = (f"TRIGGER: profit drawdown — total {total_pnl:.4f} < threshold {threshold:.4f} "
+                       f"(closed={closed_pnl:.4f} open={open_pnl:.4f} dd_pct={dd_pct}%) "
                        f"-> evolving gen {self._current_gen} -> {self._current_gen + 1}")
                 logger.warning(msg); append_log("WARNING", msg)
                 self.journal.record(EV_TRIGGERED, self._current_gen, {
-                    "reason": reason, "equity_dd_pct": equity_dd_pct,
-                    "peak_equity": peak_equity, "equity_pnl": equity_pnl,
+                    "reason": reason,
+                    "closed_pnl": closed_pnl, "open_pnl": open_pnl,
+                    "total_pnl": total_pnl, "threshold": threshold,
                     "metrics": snap.get("metrics", {}),
                 })
                 self._evolve(snap, reason)
@@ -472,16 +483,6 @@ class Orchestrator:
             f"✅ FT error fix deployed gen {broken_gen} — resuming…")
 
     # ── Evolution ──────────────────────────────────────────────
-    def _current_equity_pnl(self, snap: dict) -> float:
-        """Closed PnL + current unrealized PnL from open trades."""
-        closed_pnl = snap.get("metrics", {}).get("current_pnl", 0.0) or 0.0
-        try:
-            open_profits = self.deployer.ft.api_open_trade_profits()
-            unrealized = sum(t.get("profit_abs", 0) for t in open_profits)
-        except Exception:
-            unrealized = 0.0
-        return round(closed_pnl + unrealized, 4)
-
     def _merge_open_profits(self, open_list: list) -> list:
         """Enrich open trade list with current unrealized profit from FT REST API."""
         if not open_list:
@@ -567,7 +568,7 @@ class Orchestrator:
             self._fix_attempts    = 0
             self._last_error_sig  = ""
             self._last_open_trade = datetime.now().astimezone()  # idle clock starts fresh
-            self._peak_equity     = 0.0   # equity peak resets — old peak is meaningless
+            # no equity-peak state to reset — drawdown comes from /api/v1/profit
 
             dd_pct  = cfg("trigger", "profit_drawdown_pct",        default=0)
             dd_min  = cfg("trigger", "profit_drawdown_min_trades", default=5)
@@ -599,12 +600,14 @@ class Orchestrator:
                     "trades_min":             min_t,
                     "in_cooldown":            True,
                     "loss_trigger_ready":     False,
-                    "dd_threshold_pct":       dd_pct,
-                    "dd_min_trades":          dd_min,
-                    "dd_current_pct":         None,
-                    "dd_current_pnl":         0.0,
-                    "dd_peak_pnl":            0.0,
-                    "dd_trigger_ready":       False,
+                    "dd_threshold_pct":  dd_pct,
+                    "dd_min_trades":     dd_min,
+                    "dd_closed_pnl":     0.0,
+                    "dd_open_pnl":       0.0,
+                    "dd_total_pnl":      0.0,
+                    "dd_threshold_val":  0.0,
+                    "dd_display_pct":    None,
+                    "dd_trigger_ready":  False,
                     "idle_threshold_min":     idle_min if idle_min > 0 else None,
                     "idle_elapsed_min":       0.0,
                     "idle_trigger_ready":     False,
