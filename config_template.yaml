@@ -15,6 +15,7 @@ autoevolve:
 
 # ── FreqTrade ─────────────────────────────────────────────────
 freqtrade:
+  root_dir: "~/freqtrade"   # optional override           
 
   # !! REQUIRED !! Path to FreqTrade's own virtual environment.
   # AutoEvolve uses this venv to start/stop/reload FreqTrade.
@@ -101,31 +102,33 @@ evolution:
     - "partial_exit_scaling"        # Scale out in tranches (50% at 1R, trail the rest)
     - "regime_filter"               # Detect trending vs ranging, adapt strategy mode
     - "candlestick_patterns"        # Engulfing, pin bar, inside bar, hammer at S/R
-
+    - "volatility_of_volatility_risk_premium"
+    - "tail_risk_premium"
+    - "fisher_transform"
+    - "fibonacci_trading"
 
 # ── Evolution Triggers ────────────────────────────────────────
 # Conditions that cause AutoEvolve to start a new evolution cycle.
 # The cooldown and trade gate apply to ALL triggers.
 trigger:
-
+  # --- Consecutive loss trigger ---
+  # Evolve after N losing trades in a row (counted from most recent backwards).
+  consecutive_losses: 5
+   
   # Minimum number of CLOSED trades before any trigger can fire.
   # Too low = LLM gets misleading stats. Recommended: 15–30.
-  min_trades_before_trigger: 10
+  min_trades_before_trigger: 30
 
   # Minimum time between evolutions regardless of trigger conditions.
   # Prevents rapid-fire evolution on volatile markets.
-  cooldown_minutes: 60
-
-  # --- Consecutive loss trigger ---
-  # Evolve after N losing trades in a row (counted from most recent backwards).
-  consecutive_losses: 3
+  cooldown_minutes: 240
 
   # --- Idle trigger ---
   # Evolve if no new trade has been OPENED in this many minutes.
   # Catches strategies that become too restrictive and stop entering positions.
   # Counts time since last trade entry, even if other trades are still open.
   # Set to 0 to disable.
-  idle_trigger_minutes: 20
+  idle_trigger_minutes: 180
 
   # Profit drawdown trigger — fires when cumulative PnL drops X% from its
   # session peak, even if win rate still looks healthy.
@@ -147,7 +150,7 @@ rollback:
 
   # Number of trades to observe after deploying a new generation.
   # Higher = more evidence before deciding. Lower = faster reaction.
-  evaluate_after_n_trades: 30
+  evaluate_after_n_trades: 10
 
   # Roll back if win rate during the monitoring window falls below this.
   rollback_if_winrate_below: 0.35
@@ -166,7 +169,7 @@ checkpoints:
   directory: "./checkpoints"
 
   # Maximum number of generations to keep on disk. Oldest are pruned automatically.
-  max_generations: 10
+  max_generations: 100
 
 
 # ── Optimization Targets ──────────────────────────────────────
@@ -192,7 +195,7 @@ optimization:
 #       model:    "my-model-name"
 #       base_url: "https://api.myprovider.com/v1"
 #       api_key:  "sk-..."
-#       max_tokens:  16384
+#       max_tokens:  50000
 #       temperature: 0.6
 #       # OpenRouter-only routing params (ignored by other providers):
 #       allow_fallbacks:       true
@@ -201,77 +204,74 @@ optimization:
 #       sort:                  "price"
 llm:
   # !! REQUIRED !! Set to the provider block name you want to use.
-  provider: "anthropic"
+  provider: "openrouter"
 
-  # Extra imports the LLM is allowed to use, beyond the built-in verified list.
+  # Extra imports the LLM is allowed to use, beyond the verified FreqTrade
+  # standard imports already built into the system prompt.
+  # Use this for third-party libraries or non-standard paths you want enabled.
+  # The LLM uses entry_tag, exit_reason, profit%, duration to spot patterns.
   # The system prompt already includes all standard FreqTrade imports (IStrategy,
   # Trade, stoploss_from_open, informative, etc.) and Python stdlib (logging,
   # datetime, typing, collections, math...).
   # Only add third-party libraries here that you have installed.
-  extra_allowed_imports: []
+  # Example: add "ta" if you have the 'ta' library installed alongside talib.
+  # Leave empty [] to use only the built-in verified list.
+  extra_allowed_imports: []       # remove brackets if you add those below
   #  - "ta"                       # if you have the 'ta' library installed
   #  - "sklearn.preprocessing"    # if you have scikit-learn installed
   #  - "torch"                    # if you have PyTorch installed
 
   # Hard timeout for all LLM calls in seconds.
-  # DeepSeek R1 and other reasoning models can be slow — 600s recommended.
-  timeout: 600
+  # DeepSeek R1 and other reasoning models can be slow — >600s recommended.
+  timeout: 900
 
   # Trim the prompt if it exceeds this many tokens (~4 chars/token).
   # Prevents oversized context from exhausting provider limits.
   max_prompt_tokens: 50000
   
-  # Extra imports the LLM is allowed to use, beyond the verified FreqTrade
-  # standard imports already built into the system prompt.
-  # Use this for third-party libraries or non-standard paths you want enabled.
-  # Leave empty to use only the built-in verified list.
-  # Example: add "ta" if you have the 'ta' library installed alongside talib.
   # Trade history sent to the LLM with each evolution.
-  # The LLM uses entry_tag, exit_reason, profit%, duration to spot patterns.
-  # Duration is in minutes — more interpretable than candles for the LLM.
   # Set include_trade_history: false or trade_history_count: 0 to disable
   # (useful if token budget is tight or trade base is huge).
   include_trade_history: true
-  trade_history_count:   20   # max number of recent closed trades to include
-
+  trade_history_count:   50   # max number of recent closed trades to include
 
   # ── Anthropic (Claude) ───────────────────────────────────────
   anthropic:
     model:       "claude-opus-4-6"  # or claude-sonnet-4-6 for lower cost
-    api_key_env: "ANTHROPIC_API_KEY"  # name of the environment variable holding your key
-    max_tokens:  16384
+    api_key: "ANTHROPIC_API_KEY"  # name of the environment variable holding your key
+    max_tokens:  50000
     # Note: temperature and provider routing are not used for Anthropic (native SDK)
 
   # ── OpenAI ───────────────────────────────────────────────────
   openai:
     model:       "gpt-4o"
-    api_key_env: "OPENAI_API_KEY"
-    max_tokens:  16384
+    api_key: "OPENAI_API_KEY"
+    max_tokens:  50000
     temperature: 0.6             # 0.0 = deterministic, 1.0 = creative. 0.6 recommended.
 
   # ── OpenRouter ───────────────────────────────────────────────
   # Access hundreds of models through one API. See https://openrouter.ai/models
   openrouter:
     model:       "anthropic/claude-opus-4-6"  # any slug from openrouter.ai/models
-    api_key_env: "OPENROUTER_API_KEY"
+    api_key: "OPENROUTER_API_KEY"
     base_url:    "https://openrouter.ai/api/v1"
     site_url:    ""               # optional: your site URL sent as HTTP-Referer
     site_name:   "AutoEvolve"    # optional: your app name sent as X-Title
-    max_tokens:  16384
+    max_tokens:  50000
     temperature: 0.6
     allow_fallbacks:       true  # if model is unavailable, use cheapest equivalent
-    max_price_prompt:      0.10  # skip models more expensive than this per 1M prompt tokens
-    max_price_completion:  0.40  # skip models more expensive than this per 1M completion tokens
+    max_price_prompt:      3.00  # skip models more expensive than this per 1M prompt tokens
+    max_price_completion:  15.00  # skip models more expensive than this per 1M completion tokens
     sort:                  "price"  # price | throughput | latency
 
   # ── Chutes.ai ────────────────────────────────────────────────
   # Free tier available. See https://chutes.ai for model list.
   chutes:
-    model:       "deepseek-ai/DeepSeek-R1"
+    model:       "deepseek-ai/DeepSeek-V3.2-TEE"
     api_key:     ""              # paste API key here, OR set api_key_env below
     api_key_env: "CHUTES_API_KEY"
     base_url:    "https://llm.chutes.ai/v1"
-    max_tokens:  16384
+    max_tokens:  50000
     temperature: 0.6
 
   # ── Ollama (local) ───────────────────────────────────────────
@@ -280,7 +280,7 @@ llm:
   ollama:
     model:    "codellama:34b"   # or llama3:70b, deepseek-coder:33b, etc.
     base_url: "http://localhost:11434"
-    max_tokens: 16384
+    max_tokens: 50000
     temperature: 0.6
 
 
@@ -288,7 +288,7 @@ llm:
 dashboard:
   port:         8501          # port the web dashboard listens on
   host:         "0.0.0.0"    # bind address (0.0.0.0 = all interfaces)
-  refresh_secs: 10            # dashboard poll interval in seconds
+  refresh_secs: 20            # dashboard poll interval in seconds
 
 
 # ── Logging ───────────────────────────────────────────────────
