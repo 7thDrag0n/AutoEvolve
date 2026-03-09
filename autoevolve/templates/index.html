@@ -579,7 +579,7 @@ function renderTriggers() {
     if (ddDispPct == null) {
       // Waiting for enough closed trades — show progress + live PnL
       const minT       = ts.trades_min || 0;
-      const closedCnt  = ts.total_trades || 0;
+      const closedCnt  = s.total_trades || 0;
       const waitCls    = closedCnt >= minT ? 'trig-ok' : 'trig-dim';
       const cntStr     = `waiting ${closedCnt}/${minT} closed trades`;
       const cPnlCls    = ddClosed != null && ddClosed < 0 ? 'trig-warn' : '';
