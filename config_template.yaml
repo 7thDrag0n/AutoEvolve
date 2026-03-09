@@ -101,10 +101,7 @@ evolution:
     - "partial_exit_scaling"        # Scale out in tranches (50% at 1R, trail the rest)
     - "regime_filter"               # Detect trending vs ranging, adapt strategy mode
     - "candlestick_patterns"        # Engulfing, pin bar, inside bar, hammer at S/R
-    # - "volatility_of_volatility_risk_premium"
-    # - "tail_risk_premium"
-    # - "fisher_transform"
-    # - "fibonacci_trading"
+
 
 # ── Evolution Triggers ────────────────────────────────────────
 # Conditions that cause AutoEvolve to start a new evolution cycle.
@@ -130,17 +127,18 @@ trigger:
   # Set to 0 to disable.
   idle_trigger_minutes: 20
 
-  # --- Profit drawdown trigger ---
-  # Evolve when cumulative PnL drops X% below its all-time peak.
-  # Catches gradual equity erosion even when win rate looks acceptable.
-  # Example: peak PnL was +10 USDT, drawdown_pct=20 → triggers if PnL falls to +8 USDT.
+  # Profit drawdown trigger — fires when cumulative PnL drops X% from its
+  # session peak, even if win rate still looks healthy.
+  # Example: peak was +10 USDT, drawdown_pct=20 → triggers if PnL falls to +8 USDT.
   # Set to 0 to disable.
-  profit_drawdown_pct: 20
-
-  # Minimum closed trades required before the drawdown trigger activates.
-  # Prevents false triggers from early PnL volatility.
-  profit_drawdown_min_trades: 5
-
+  profit_drawdown_pct:         50    # trigger when open-trade losses erase this % of closed PnL.
+                                     # Formula: total_pnl = closed_pnl + open_pnl
+                                     #          threshold  = closed_pnl × (1 - dd_pct/100)
+                                     #          fires when: total_pnl < threshold
+                                     # Example (dd_pct=50): closed=+10, open=-6 → total=+4 < floor=+5 → TRIGGER
+                                     #                       closed=+10, open=-4 → total=+6 > floor=+5 → no trigger
+                                     # (0 = disabled)
+  profit_drawdown_min_trades:  5     # minimum closed trades before this trigger activates
 
 # ── Rollback ──────────────────────────────────────────────────
 # After each evolution, AutoEvolve monitors the next N trades.
@@ -222,7 +220,7 @@ llm:
   # Trim the prompt if it exceeds this many tokens (~4 chars/token).
   # Prevents oversized context from exhausting provider limits.
   max_prompt_tokens: 50000
-
+  
   # Extra imports the LLM is allowed to use, beyond the verified FreqTrade
   # standard imports already built into the system prompt.
   # Use this for third-party libraries or non-standard paths you want enabled.
@@ -234,19 +232,20 @@ llm:
   # Set include_trade_history: false or trade_history_count: 0 to disable
   # (useful if token budget is tight or trade base is huge).
   include_trade_history: true
-  trade_history_count:   50   # max number of recent closed trades to include
+  trade_history_count:   20   # max number of recent closed trades to include
+
 
   # ── Anthropic (Claude) ───────────────────────────────────────
   anthropic:
     model:       "claude-opus-4-6"  # or claude-sonnet-4-6 for lower cost
-    api_key: "ANTHROPIC_API_KEY"  # name of the environment variable holding your key
+    api_key_env: "ANTHROPIC_API_KEY"  # name of the environment variable holding your key
     max_tokens:  16384
     # Note: temperature and provider routing are not used for Anthropic (native SDK)
 
   # ── OpenAI ───────────────────────────────────────────────────
   openai:
     model:       "gpt-4o"
-    api_key: "OPENAI_API_KEY"
+    api_key_env: "OPENAI_API_KEY"
     max_tokens:  16384
     temperature: 0.6             # 0.0 = deterministic, 1.0 = creative. 0.6 recommended.
 
@@ -254,7 +253,7 @@ llm:
   # Access hundreds of models through one API. See https://openrouter.ai/models
   openrouter:
     model:       "anthropic/claude-opus-4-6"  # any slug from openrouter.ai/models
-    api_key: "OPENROUTER_API_KEY"
+    api_key_env: "OPENROUTER_API_KEY"
     base_url:    "https://openrouter.ai/api/v1"
     site_url:    ""               # optional: your site URL sent as HTTP-Referer
     site_name:   "AutoEvolve"    # optional: your app name sent as X-Title
@@ -270,7 +269,7 @@ llm:
   chutes:
     model:       "deepseek-ai/DeepSeek-R1"
     api_key:     ""              # paste API key here, OR set api_key_env below
-    api_key: "CHUTES_API_KEY"
+    api_key_env: "CHUTES_API_KEY"
     base_url:    "https://llm.chutes.ai/v1"
     max_tokens:  16384
     temperature: 0.6
