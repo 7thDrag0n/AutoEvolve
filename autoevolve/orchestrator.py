@@ -141,7 +141,7 @@ class Orchestrator:
             "open_trades":      _snap_always.get("total_open", 0),
             "open_trades_list": self._merge_open_profits(_snap_always.get("open_list", [])),
             "metrics":       _snap_always.get("metrics", {}),
-            "recent_trades": _snap_always.get("recent", []),
+            "recent_trades": [t for t in _snap_always.get("recent", []) if not t.get("open", False)],
             "snapshot_at":   local_str(),
         })
 

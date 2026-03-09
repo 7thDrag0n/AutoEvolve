@@ -392,7 +392,7 @@ function setTradeTab(which) {
 }
 
 function renderTrades() {
-  const trades     = (_state.recent_trades || []).slice().reverse(); // newest first
+  const trades     = (_state.recent_trades || []).filter(t => !t.open).slice().reverse(); // newest first, closed only
   const openTrades = _state.open_trades_list || [];
   const m          = (_state.metrics || {});
   const body       = document.getElementById('trades-body');
@@ -577,10 +577,18 @@ function renderTriggers() {
     const openStr   = `open ${fmt(ddOpen)}`;
 
     if (ddDispPct == null) {
-      // Waiting for enough closed trades
+      // Waiting for enough closed trades — show progress + live PnL
+      const minT       = ts.trades_min || 0;
+      const closedCnt  = ts.total_trades || 0;
+      const waitCls    = closedCnt >= minT ? 'trig-ok' : 'trig-dim';
+      const cntStr     = `waiting ${closedCnt}/${minT} closed trades`;
+      const cPnlCls    = ddClosed != null && ddClosed < 0 ? 'trig-warn' : '';
+      const oPnlCls    = ddOpen   != null && ddOpen   < 0 ? 'trig-warn' : '';
+      const closedHtml = `<span class="${cPnlCls}">${closedStr}</span>`;
+      const openHtml   = `<span class="${oPnlCls}">${openStr}</span>`;
       rows.push(row('Profit drawdown',
-        `waiting for ${ts.trades_min||0} closed trades  ·  ${closedStr}  ·  ${openStr}`,
-        'trig-dim'));
+        `${cntStr}  ·  ${closedHtml}  ·  ${openHtml}`,
+        waitCls));
     } else {
       // Active — show display_pct vs threshold, plus USDT context
       const triggered = ddTotal != null && ddFloor != null && ddTotal < ddFloor;
