@@ -134,7 +134,7 @@ pip install -r requirements.txt
 
 ```bash
 # Copy the example config and edit it
-cp config.example.yaml config.yaml
+cp config_template.yaml config.yaml
 ```
 
 Key settings to configure in `config.yaml`:
@@ -213,6 +213,7 @@ Select any previous generation from the dropdown and click **Rollback to Selecte
 ### FreqTrade
 ```yaml
 freqtrade:
+  root_dir:       "~/freqtrade" 
   venv:           "~/freqtrade/.venv"
   config_file:    "./freqtrade_config.json"
   strategies_dir: "~/freqtrade/user_data/strategies"
