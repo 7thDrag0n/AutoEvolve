@@ -391,6 +391,11 @@ autoevolve/
 
 ---
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/image?repos=7thDrag0n/AutoEvolve&type=date&legend=top-left)](https://www.star-history.com/?repos=7thDrag0n%2FAutoEvolve&type=date&legend=top-left)
+
+
 ## License
 
 MIT — use freely, modify as needed, trade at your own risk.
