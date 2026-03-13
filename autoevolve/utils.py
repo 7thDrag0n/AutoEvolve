@@ -259,23 +259,52 @@ def _read_state_raw() -> dict:
 # ══════════════════════════════════════════════════════════════
 # Control file
 # ══════════════════════════════════════════════════════════════
+_control_lock: threading.Lock = threading.Lock()
+
 def send_control(action: str, **kwargs) -> None:
     cmd = {"action": action, "sent_at": local_str(), **kwargs}
-    try:
-        CONTROL_FILE.write_text(json.dumps(cmd), encoding="utf-8")
-    except Exception as e:
-        print(f"[send_control error] {e}", file=sys.stderr)
+    with _control_lock:
+        try:
+            queue: list = []
+            if CONTROL_FILE.exists():
+                try:
+                    existing = json.loads(CONTROL_FILE.read_text(encoding="utf-8"))
+                    if isinstance(existing, list):
+                        queue = existing
+                    elif isinstance(existing, dict):
+                        queue = [existing]
+                except Exception:
+                    queue = []
+            queue.append(cmd)
+            CONTROL_FILE.write_text(json.dumps(queue, indent=2), encoding="utf-8")
+        except Exception as e:
+            print(f"[send_control error] {e}", file=sys.stderr)
 
 
 def consume_control() -> Optional[dict]:
-    if not CONTROL_FILE.exists():
-        return None
-    try:
-        cmd = json.loads(CONTROL_FILE.read_text())
-        CONTROL_FILE.unlink(missing_ok=True)
-        return cmd
-    except Exception:
-        return None
+    with _control_lock:
+        if not CONTROL_FILE.exists():
+            return None
+        try:
+            existing = json.loads(CONTROL_FILE.read_text(encoding="utf-8"))
+            if isinstance(existing, list):
+                queue = existing
+            elif isinstance(existing, dict):
+                queue = [existing]
+            else:
+                CONTROL_FILE.unlink(missing_ok=True)
+                return None
+            if not queue:
+                CONTROL_FILE.unlink(missing_ok=True)
+                return None
+            cmd = queue.pop(0)
+            if queue:
+                CONTROL_FILE.write_text(json.dumps(queue, indent=2), encoding="utf-8")
+            else:
+                CONTROL_FILE.unlink(missing_ok=True)
+            return cmd
+        except Exception:
+            return None
 
 
 # ══════════════════════════════════════════════════════════════
@@ -331,3 +360,22 @@ def ft_log_path() -> Path:
         return (BASE_DIR / "logs" / "freqtrade.log").resolve()
     p = Path(raw).expanduser()
     return p if p.is_absolute() else (BASE_DIR / p).resolve()
+
+
+def ft_root_path() -> Path:
+    """
+    Working directory for FreqTrade — where user_data/ lives.
+    Set freqtrade.root in config.yaml.  Defaults to BASE_DIR parent
+    (assuming AutoEvolveStrategy lives inside user_data/strategies/).
+    """
+    raw = cfg("freqtrade", "root", default="")
+    if raw:
+        p = Path(raw).expanduser()
+        return p if p.is_absolute() else (BASE_DIR / p).resolve()
+    # Auto-detect: walk up from BASE_DIR until we find user_data/
+    candidate = BASE_DIR
+    for _ in range(5):
+        if (candidate / "user_data").is_dir():
+            return candidate
+        candidate = candidate.parent
+    return BASE_DIR

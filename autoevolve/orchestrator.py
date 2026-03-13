@@ -80,16 +80,21 @@ class Orchestrator:
         # Check if FT is actually alive right now (before clearing stale PID)
         ft_actually_running = self.ft.is_running()
 
-        # Now clear stale pid/status from state (does NOT touch ft_desired)
+        # Preserve PID and start time if FT is already running — clearing them
+        # would leave the dashboard without uptime info after an AE restart.
+        prev_state = stale if isinstance(stale, dict) else {}
+        restored_ft_pid        = prev_state.get("ft_pid")        if ft_actually_running else None
+        restored_ft_started_at = prev_state.get("ft_started_at") if ft_actually_running else None
+
         write_state({
             "current_gen":    self._current_gen,
             "status":         "running" if not self._paused else "paused",
             "paused":         self._paused,
             "monitoring":     False,
             "ft_running":     ft_actually_running,
-            "ft_pid":         None,           # cleared until FT.start() sets it
+            "ft_pid":         restored_ft_pid,
             "ft_status":      "stopped" if not ft_actually_running else "running",
-            "ft_started_at":  None,           # cleared — stale uptime from prev session
+            "ft_started_at":  restored_ft_started_at,
             "ft_error":       None,
             "ft_error_full":  None,
             "ft_error_count": 0,
@@ -98,6 +103,10 @@ class Orchestrator:
             "orch_started":   local_str(),
             "orch_alive":     local_str(),
         })
+
+        # If FT is running but start time was never recorded, stamp it now
+        if ft_actually_running and not restored_ft_started_at:
+            write_state({"ft_started_at": local_str()})
 
         if ft_desired == "running" and not ft_actually_running:
             append_log("INFO", "ft_desired=running — auto-starting FreqTrade on restart")
@@ -225,7 +234,7 @@ class Orchestrator:
                 "loss_threshold":         threshold,
                 "trades_total":           total,
                 "trades_needed":          max(0, min_t - total),
-                "trades_min":             min_t,
+                "loss_min_trades":        min_t,
                 "in_cooldown":            cooldown_remaining > 0,
                 "loss_trigger_ready":     total >= min_t and cooldown_remaining == 0,
                 "dd_threshold_pct":  dd_pct,
@@ -236,7 +245,6 @@ class Orchestrator:
                 "dd_total_pnl":      0.0,
                 "dd_threshold_val":  0.0,
                 "dd_display_pct":    None,
-                "trades_min":        dd_min,
             },
         })
 
