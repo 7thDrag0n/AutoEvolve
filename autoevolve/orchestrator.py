@@ -145,6 +145,34 @@ class Orchestrator:
             "snapshot_at":   local_str(),
         })
 
+        # ── Always update drawdown display values ─────────────
+        # Must happen before any early return (paused / monitoring) so the
+        # dashboard always shows live closed+open PnL regardless of state.
+        _dd_pct_always = cfg("trigger", "profit_drawdown_pct", default=0)
+        _dd_min_always = cfg("trigger", "profit_drawdown_min_trades", default=5)
+        if _dd_pct_always > 0:
+            _always_metrics   = _snap_always.get("metrics", {})
+            _always_closed    = round(float(_always_metrics.get("current_pnl") or 0.0), 4)
+            _always_open_list = self.deployer.ft.api_open_trade_profits()
+            _always_open      = round(sum(t.get("profit_abs", 0.0) for t in _always_open_list), 4)
+            _always_total     = round(_always_closed + _always_open, 4)
+            _always_threshold = round(_always_closed * (1 - _dd_pct_always / 100.0), 4)
+            _always_total_cnt = _snap_always.get("total_closed", 0)
+            if _always_closed > 0 and _always_open < 0:
+                _always_disp_pct = round(-_always_open / _always_closed * 100, 2)
+            else:
+                _always_disp_pct = 0.0
+            write_state({"trigger_status": {
+                **read_state().get("trigger_status", {}),
+                "dd_threshold_pct": _dd_pct_always,
+                "dd_closed_pnl":    _always_closed,
+                "dd_open_pnl":      _always_open,
+                "dd_total_pnl":     _always_total,
+                "dd_threshold_val": _always_threshold,
+                "dd_display_pct":   _always_disp_pct if _always_total_cnt >= _dd_min_always else None,
+                "trades_min":       _dd_min_always,
+            }})
+
         if self._paused:
             write_state({"paused": True, "status": "paused", "evolve_desired": "stopped"})
             return
