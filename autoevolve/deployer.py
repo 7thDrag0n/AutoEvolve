@@ -523,32 +523,34 @@ class FTManager:
 
     # ── Stop ──────────────────────────────────────────────────
     def stop(self) -> bool:
+        """Stop ONLY the FreqTrade process that AutoEvolve started (by PID).
+        Never uses broad process-name kills that could affect independent
+        FreqTrade instances running on the same host."""
         try:
+            import os as _os
+            pid = read_state().get("ft_pid")
+            if not pid:
+                append_log("WARNING", "stop(): no stored PID — nothing to kill")
+                write_state({"ft_pid": None, "ft_status": "stopped", "ft_running": False})
+                return True
+
+            pid = int(pid)
             if platform.system() == "Windows":
-                pid = read_state().get("ft_pid")
-                if pid:
-                    subprocess.run(
-                        ["taskkill", "/F", "/PID", str(pid)],
-                        capture_output=True,
-                    )
                 subprocess.run(
-                    ["taskkill", "/F", "/IM", "freqtrade.exe"],
+                    ["taskkill", "/F", "/PID", str(pid)],
                     capture_output=True,
-                )
-                # Also cover pip-installed FT running as python.exe
-                subprocess.run(
-                    ["wmic", "process", "where",
-                     "name='python.exe' and commandline like '%freqtrade%trade%'",
-                     "call", "terminate"],
-                    capture_output=True, timeout=10,
                 )
             else:
-                subprocess.run(
-                    ["pkill", "-f", "freqtrade trade"],
-                    capture_output=True,
-                )
+                try:
+                    _os.kill(pid, 15)   # SIGTERM — give FT a chance to shut cleanly
+                    import time as _time; _time.sleep(2)
+                    if self._pid_alive(pid):
+                        _os.kill(pid, 9)   # SIGKILL if still alive
+                except ProcessLookupError:
+                    pass   # already dead — that's fine
+
             write_state({"ft_pid": None, "ft_status": "stopped", "ft_running": False})
-            append_log("INFO", "FreqTrade stopped")
+            append_log("INFO", f"FreqTrade stopped (PID {pid})")
             return True
         except Exception as e:
             append_log("ERROR", f"Stop failed: {e}")
